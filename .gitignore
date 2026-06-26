@@ -1,0 +1,18 @@
+# Virtual Environment
+venv/
+
+# API Keys
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Generated Images
+images/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
