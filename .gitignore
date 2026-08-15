@@ -9,10 +9,28 @@ __pycache__/
 *.pyc
 
 # Generated Images
-images/
+output/
+
+# Your own scripts and prompt files stay local — only the example is tracked,
+# so an unreleased video's beats never end up in a public repo.
+prompts/*.txt
+!prompts/example_script.txt
+
+# Working notes for whoever is developing this (session log, phase prompts).
+# Useful locally, meaningless to anyone else.
+docs/PROGRESS.md
+docs/sessions/
+
+# Automation runtime artifacts (never commit — see CLAUDE.md)
+flow_profile/
+flow/
+debug_before_*.png
 
 # macOS
 .DS_Store
 
 # Windows
 Thumbs.db
+
+# Local-only editor/assistant notes (published equivalent: DEVELOPMENT.md)
+CLAUDE.md

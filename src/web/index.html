@@ -1,0 +1,1847 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flow Image Automation</title>
+<style>
+  :root {
+    /* Surfaces — a cool neutral ramp, each step a clear elevation change. */
+    --bg: #0a0d13;
+    --panel: #12171f;
+    --panel-2: #1a212c;
+    --panel-3: #212a38;
+    --border: #232d3c;
+    --border-strong: #35415a;
+
+    /* Text — three weights of emphasis, all AA-contrast on --panel. */
+    --text: #e9edf5;
+    --muted: #97a3b8;
+    /* Tertiary text. Deliberately not darker than this: below roughly this
+       lightness it drops under WCAG AA (4.5:1) on --panel at the small sizes
+       it's used at (9.5–11px labels, captions, hints). */
+    --faint: #8a95a8;
+
+    /* Accent + semantics. --accent is for borders/highlights/text on dark;
+       --accent-btn is the deeper fill a solid button needs for white label
+       text to clear 4.5:1 (the bright accent only reaches ~3.2:1). */
+    --accent: #5b8cff;
+    --accent-btn: #3b6fd4;
+    --accent-btn-hover: #4a7ce6;
+    --accent-soft: rgba(91, 140, 255, .14);
+    --ok: #34d399;
+    --ok-soft: rgba(52, 211, 153, .13);
+    --warn: #fbbf24;
+    --warn-soft: rgba(251, 191, 36, .13);
+    --error: #f87171;
+    --error-soft: rgba(248, 113, 113, .13);
+    --pending: #5a6577;
+
+    --radius: 10px;
+    --radius-sm: 7px;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden; /* the page itself never scrolls; bounded regions below do */
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body { display: flex; flex-direction: column; }
+
+  ::selection { background: var(--accent-soft); }
+
+  /* ---------- header ---------- */
+
+  header {
+    flex: 0 0 auto;
+    padding: 0 18px;
+    height: 52px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: linear-gradient(180deg, var(--panel) 0%, #10151d 100%);
+  }
+
+  .brand { display: flex; align-items: center; gap: 9px; margin-right: 2px; }
+  .brand .glyph {
+    width: 22px; height: 22px; border-radius: 6px; flex: none;
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; color: #fff;
+  }
+  h1 { font-size: 14px; margin: 0; font-weight: 650; letter-spacing: -.1px; white-space: nowrap; }
+
+  .badge {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    flex: none;
+  }
+  .badge::before {
+    content: '';
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--pending);
+    flex: none;
+  }
+  .badge.live {
+    background: var(--accent-soft);
+    border-color: rgba(91,140,255,.45);
+    color: #c3d7ff;
+  }
+  .badge.live::before { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+  .badge.ok { background: var(--ok-soft); border-color: rgba(52,211,153,.4); color: #9df0d0; }
+  .badge.ok::before { background: var(--ok); }
+
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+
+  #paths-badge {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--faint);
+    background: transparent;
+    border-color: transparent;
+    margin-left: auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    max-width: 46%;
+    white-space: nowrap;
+    line-height: 20px;
+  }
+  #paths-badge::before { display: none; }
+
+  /* ---------- layout ---------- */
+
+  main {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 14px;
+    display: grid;
+    gap: 14px;
+    grid-template-columns: 1fr;
+    grid-auto-rows: 1fr;
+    overflow: hidden;
+  }
+  @media (min-width: 1000px) {
+    main { grid-template-columns: 372px 1fr; grid-template-rows: 1fr; }
+  }
+
+  /* Left column: Setup and Run size to content; Prompts absorbs the slack
+     but can never be squeezed below a usable editor height. */
+  .split {
+    display: grid;
+    gap: 14px;
+    min-height: 0;
+    /* Without this a long unwrappable path inside a panel raises the whole
+       column's min-content width, and the column then overflows its grid
+       track and sits on top of the next column. */
+    min-width: 0;
+    height: 100%;
+    overflow-y: auto; /* last-resort safety net for very short windows */
+    grid-template-rows: auto minmax(170px, 1fr) auto;
+    align-content: start;
+  }
+  /* Right column: Progress compact, Images takes the room, Activity pinned. */
+  .split.right { grid-template-rows: auto minmax(0, 1fr) auto; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 13px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0; /* never let inner text widen the panel past its column */
+  }
+
+  /* Two kinds of panel, and the difference matters more than it looks.
+
+     A .flexible panel owns a genuinely shrinkable region (the editor, the
+     image grid), so it may size below its content — with overflow:hidden so
+     that content can never render outside the panel and land on top of the
+     one below it (a real bug: with a save alert showing and a 97-beat file
+     loaded, Upload/Save/Reload drew behind the Run panel).
+
+     Every other panel is nothing but controls, and shrinking one only hides
+     buttons. Those keep overflow visible ON PURPOSE: per CSS, a box with
+     overflow other than visible has an automatic minimum size of 0, so
+     adding the clip here would let the grid squeeze the panel to nothing
+     and silently cut its buttons off — which is exactly what it did. With
+     visible overflow the row is forced to the panel's content height, so if
+     the window is genuinely too short the column scrolls instead. Content
+     behind a scrollbar is recoverable; content clipped away is not. */
+  .panel.flexible { min-height: 0; overflow: hidden; }
+
+  .panel h2 {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: .9px;
+    color: var(--faint);
+    margin: 0 0 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .panel h2 .count {
+    font-size: 10px;
+    letter-spacing: 0;
+    color: var(--muted);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 7px;
+    text-transform: none;
+    font-weight: 600;
+  }
+
+  /* Only the checklist scrolls inside Setup, never the action buttons. */
+  #setup-list {
+    max-height: 82px;
+    overflow-y: auto;
+    flex: 0 1 auto; /* may shrink on short windows; the buttons below never do */
+    min-height: 34px;
+    margin: -2px 0 0;
+  }
+
+  /* ---------- form controls ---------- */
+
+  label {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin: 0 0 4px;
+    font-weight: 600;
+    letter-spacing: .2px;
+  }
+
+  input[type=text], input[type=number], select, textarea {
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 12.5px;
+    transition: border-color .12s ease, box-shadow .12s ease;
+  }
+  input::placeholder, textarea::placeholder { color: var(--faint); }
+  input:hover, select:hover, textarea:hover { border-color: var(--border-strong); }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  select {
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 4.5L6 8l3-3.5' fill='none' stroke='%2397a3b8' stroke-width='1.5' stroke-linecap='round'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 9px center;
+    padding-right: 26px;
+    cursor: pointer;
+  }
+  input[type=text], #prompts-file, #output-dir { font-family: var(--mono); font-size: 11.5px; }
+
+  textarea {
+    /* Shrinks to nothing before the buttons below it ever give up space —
+       a squeezed editor is recoverable, an unreachable Save button is not. */
+    flex: 1 1 0;
+    min-height: 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    resize: none;
+    /* pre-wrap, not pre: prompt paragraphs are long, and wrapping beats a
+       horizontal scrollbar. Newlines stay significant to the parser. */
+    white-space: pre-wrap;
+  }
+
+  .row { display: flex; gap: 7px; flex-wrap: wrap; align-items: end; }
+  .row > * { flex: 1; min-width: 88px; }
+  .field { display: flex; flex-direction: column; }
+
+  /* Path + Browse pair. nowrap so the button can never drop to its own line
+     and push the action buttons out of the panel. */
+  .path-row { display: flex; gap: 6px; flex-wrap: nowrap; align-items: stretch; }
+  .path-row input { flex: 1 1 auto; min-width: 0; }
+  .path-row button { flex: 0 0 auto; padding: 8px 11px; font-size: 12px; }
+
+  /* Plain statement of where images actually land — the input can hold a
+     relative path, this is the resolved absolute one. */
+  .save-to {
+    margin-top: 7px;
+    font-size: 11px;
+    color: var(--faint);
+    font-family: var(--mono);
+    line-height: 1.5;
+    /* One line always. A wrapped absolute path grows this by 2-3 lines and
+       pushes the run buttons out of a short window. Full path is in title. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: rtl;   /* keep the tail (the folder name) visible, not the drive */
+    text-align: left;
+    flex: none;
+    min-width: 0;     /* nowrap text must not set the panel's minimum width */
+  }
+  .save-to > * { direction: ltr; unicode-bidi: embed; }
+  .save-to .to-label {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    color: var(--muted);
+    font-weight: 600;
+    letter-spacing: .2px;
+  }
+  .save-to .to-new { color: var(--warn); }
+
+  /* ---------- buttons ---------- */
+
+  button {
+    background: var(--accent-btn);
+    color: #fff;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: 8px 13px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+    transition: background .12s ease, border-color .12s ease, opacity .12s ease;
+  }
+  button:hover:not(:disabled) { background: var(--accent-btn-hover); }
+  button:active:not(:disabled) { transform: translateY(.5px); }
+  button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+  button:disabled { opacity: .38; cursor: not-allowed; }
+
+  button.secondary {
+    background: var(--panel-2);
+    border-color: var(--border);
+    color: var(--text);
+  }
+  button.secondary:hover:not(:disabled) { background: var(--panel-3); border-color: var(--border-strong); }
+
+  button.danger { background: var(--error); color: #2a0d0d; }
+  button.danger:hover:not(:disabled) { background: #ff8a8a; }
+
+  button.ghost {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--muted);
+  }
+  button.ghost:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+
+  .hint {
+    font-size: 11px;
+    color: var(--faint);
+    margin-top: 9px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: none;
+  }
+
+  /* ---------- progress ---------- */
+
+  .stats { display: flex; gap: 8px; margin-bottom: 12px; flex: none; }
+  .stat {
+    flex: 1;
+    min-width: 0;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+  }
+  .stat .n {
+    font-size: 19px;
+    font-weight: 700;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.5px;
+  }
+  .stat .k {
+    font-size: 9.5px;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: .7px;
+    font-weight: 700;
+    margin-top: 1px;
+  }
+  .stat.ok .n { color: var(--ok); }
+  .stat.error .n { color: var(--error); }
+  .stat.pending .n { color: var(--muted); }
+
+  .progress-wrap { flex: none; }
+  .progress {
+    height: 6px;
+    background: var(--panel-2);
+    border-radius: 999px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .progress > div {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #8b5cf6);
+    width: 0%;
+    transition: width .4s ease;
+  }
+  .progress-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 7px;
+    gap: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .current {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-sm);
+    padding: 9px 11px;
+    margin-top: 11px;
+    font-size: 12.5px;
+  }
+  .current .beat { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .current .txt { color: var(--muted); margin-top: 3px; font-size: 11.5px; }
+
+  /* ---------- images ---------- */
+
+  .beats {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    align-content: start;
+    gap: 9px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 3px;
+  }
+
+  .beat-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: border-color .12s ease, transform .12s ease;
+  }
+  .beat-card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+  .beat-card .thumb {
+    aspect-ratio: 16/9;
+    background: #0a0e14;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--faint);
+    font-size: 10.5px;
+    overflow: hidden;
+  }
+  .beat-card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .beat-card .meta { padding: 6px 8px; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .beat-card .num { font-weight: 700; font-size: 11.5px; font-variant-numeric: tabular-nums; flex: none; }
+  .beat-card .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .beat-card .cap {
+    font-size: 10.5px;
+    color: var(--faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .dot.success { background: var(--ok); }
+  .dot.failed { background: var(--error); }
+  .dot.pending { background: var(--pending); }
+  .dot.missing_file { background: var(--warn); }
+  .dot.stale { background: var(--warn); }
+  .beat-card.failed { border-color: rgba(248,113,113,.45); }
+  .beat-card.missing_file { border-color: rgba(251,191,36,.45); }
+  .beat-card.stale { border-color: rgba(251,191,36,.45); }
+
+  .empty {
+    color: var(--faint);
+    font-size: 12px;
+    padding: 18px 2px;
+    text-align: center;
+  }
+
+  /* ---------- activity log ---------- */
+
+  .log {
+    background: #080b10;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    height: 132px;
+    overflow-y: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.6;
+    flex: none;
+  }
+  .log div { display: flex; gap: 8px; }
+  .log .t { color: #737f93; flex: none; } /* AA on the log's darker ground */
+  .log .info { color: var(--muted); }
+  .log .ok { color: var(--ok); }
+  .log .warn { color: var(--warn); }
+  .log .error { color: var(--error); }
+
+  /* ---------- alerts + checks ---------- */
+
+  .alert {
+    border-radius: var(--radius-sm);
+    padding: 8px 11px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    margin-bottom: 9px;
+    border: 1px solid;
+  }
+  .alert:last-child { margin-bottom: 0; }
+  .alert.error { background: var(--error-soft); border-color: rgba(248,113,113,.4); color: #ffc4c4; }
+  .alert.warn { background: var(--warn-soft); border-color: rgba(251,191,36,.4); color: #ffdf9e; }
+  .alert.ok { background: var(--ok-soft); border-color: rgba(52,211,153,.4); color: #9df0d0; }
+
+  /* Alert slots collapse completely when empty, so an idle panel has no
+     mystery gap where a message would go. */
+  #prompt-alert:not(:empty), #save-feedback:not(:empty),
+  #gaps-alert:not(:empty) { margin-bottom: 9px; }
+  #run-alert:not(:empty) { margin-top: 9px; }
+  /* Alert slots and button rows never absorb the panel's height pressure —
+     only the scrollable region (editor / image grid) does. */
+  #prompt-alert, #save-feedback, #run-alert, #gaps-alert,
+  .panel > .row, #project-picker { flex: none; }
+
+  .check { display: flex; gap: 8px; padding: 5px 0; align-items: flex-start; font-size: 12px; }
+  .check + .check { border-top: 1px solid rgba(255,255,255,.045); }
+  .check .mark { flex: none; width: 14px; text-align: center; font-weight: 800; line-height: 1.5; }
+  .check.ok .mark { color: var(--ok); }
+  .check.fail .mark { color: var(--error); }
+  .check.warn .mark { color: var(--warn); }
+  .check.unknown .mark { color: var(--faint); }
+  .check .body { min-width: 0; }
+  .check .label { font-weight: 600; font-size: 12px; }
+  .check .detail { color: var(--faint); font-size: 11px; word-break: break-word; }
+  .check .fix { color: var(--warn); font-size: 11px; margin-top: 2px; }
+
+  .project-option {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 7px 9px;
+    margin-bottom: 5px;
+    border-radius: var(--radius-sm);
+    word-break: break-all;
+    font-weight: 400;
+    white-space: normal;
+  }
+  .project-option:hover { background: var(--panel-3); color: var(--text); }
+
+  code {
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    font-family: var(--mono);
+  }
+
+  /* Unsaved-changes marker: the editor is a buffer, the run reads the file,
+     so this state must never be invisible. */
+  .dirty-flag {
+    display: none;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    text-transform: uppercase;
+    color: var(--warn);
+    background: var(--warn-soft);
+    border: 1px solid rgba(251,191,36,.35);
+    border-radius: 999px;
+    padding: 2px 8px;
+  }
+  .dirty-flag.on { display: inline-flex; }
+
+  /* ---------- session chooser ---------- */
+
+  /* Shown on every load so a page never silently resumes the previous
+     video's paths — landing in a half-finished session you didn't pick is
+     how stale images get mistaken for the current run's output. */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    /* Solid, not translucent: the session chooser can appear before any
+       session has loaded, and a see-through backdrop let whatever the
+       server's default configured path happened to hold show faintly
+       through underneath — a placeholder hint, an old prompt, a thumbnail —
+       which read as unexplained leftover data rather than a blank slate. */
+    background: var(--bg);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 50;
+  }
+  .overlay.on { display: flex; }
+
+  .sheet {
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    width: 100%;
+    max-width: 540px;
+    max-height: 100%;
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    box-shadow: 0 24px 60px rgba(0,0,0,.5);
+  }
+  .sheet h2 {
+    font-size: 16px;
+    margin: 0 0 3px;
+    font-weight: 650;
+    letter-spacing: -.2px;
+    text-transform: none;
+    color: var(--text);
+  }
+  .sheet .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 16px; }
+
+  .sheet-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--faint);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    font-weight: 700;
+    margin: 16px 0 11px;
+    flex: none;
+  }
+  .sheet-divider::before, .sheet-divider::after {
+    content: '';
+    height: 1px;
+    background: var(--border);
+    flex: 1;
+  }
+
+  .session-list { overflow-y: auto; min-height: 0; margin: 0 -4px; padding: 0 4px; }
+
+  .session {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    text-align: left;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin-bottom: 7px;
+    color: var(--text);
+    font-weight: 500;
+    font-size: 13px;
+    white-space: normal;
+  }
+  .session:hover { background: var(--panel-3); border-color: var(--border-strong); }
+  .session .s-name {
+    font-weight: 650;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .session .s-meta { color: var(--faint); font-size: 11px; margin-top: 2px; }
+  .session .s-left { flex: 1; min-width: 0; }
+  .session .s-pct {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--muted);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 9px;
+  }
+  .session.complete .s-pct { color: #9df0d0; border-color: rgba(52,211,153,.4); background: var(--ok-soft); }
+  .session.broken .s-pct { color: #ffc4c4; border-color: rgba(248,113,113,.4); background: var(--error-soft); }
+
+  #session-msg:not(:empty) { margin-top: 10px; }
+
+  /* ---------- beat detail modal ---------- */
+
+  .sheet.detail { max-width: 640px; }
+  .detail-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .detail-head .beat-tag {
+    font-size: 20px;
+    font-weight: 750;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.3px;
+  }
+  .detail-close {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    width: 28px; height: 28px;
+    padding: 0;
+    border-radius: 999px;
+    font-size: 15px;
+    line-height: 1;
+    flex: none;
+  }
+  .detail-close:hover { background: var(--panel-2); color: var(--text); }
+
+  .detail-body { overflow-y: auto; min-height: 0; }
+  .detail-img {
+    width: 100%;
+    aspect-ratio: 16/9;
+    background: #0a0e14;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--faint);
+    font-size: 12.5px;
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+  .detail-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .detail-field { margin-bottom: 12px; }
+  .detail-field .dt-label {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: .7px;
+    color: var(--faint);
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .detail-field .dt-val { font-size: 13px; line-height: 1.55; }
+  .detail-field .dt-val.mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .detail-actions { display: flex; gap: 8px; margin-top: 16px; flex: none; }
+  .detail-actions button { flex: 1; }
+
+  /* ---------- images toolbar (search + status filter) ---------- */
+
+  .img-toolbar {
+    display: flex;
+    gap: 7px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+    flex: none;
+  }
+  .img-toolbar input[type=text] { flex: 1 1 140px; min-width: 90px; }
+  .chip-group { display: flex; gap: 4px; flex-wrap: wrap; }
+  .chip {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .chip:hover { border-color: var(--border-strong); color: var(--text); }
+  .chip.active { background: var(--accent-soft); border-color: rgba(91,140,255,.5); color: #c3d7ff; }
+  .chip .chip-n { opacity: .75; margin-left: 4px; font-variant-numeric: tabular-nums; }
+
+  /* ---------- save location + open-folder row ---------- */
+
+  .save-to-row { display: flex; align-items: center; gap: 8px; margin-top: 7px; flex: none; }
+  .save-to-row .save-to { margin-top: 0; flex: 1 1 auto; min-width: 0; }
+  #open-folder-btn { flex: none; padding: 5px 10px; font-size: 11px; }
+
+  /* ---------- run estimate ---------- */
+
+  #run-estimate {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 8px;
+    flex: none;
+  }
+  #run-estimate .est-n { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  /* ---------- scrollbars ---------- */
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2a3444; border-radius: 999px; border: 2px solid var(--panel); }
+  ::-webkit-scrollbar-thumb:hover { background: #3a465a; }
+  .log::-webkit-scrollbar-thumb { border-color: #080b10; }
+</style>
+</head>
+<body>
+
+<div class="overlay" id="session-overlay">
+  <div class="sheet">
+    <h2>Start a session</h2>
+    <div class="sub">Each video gets its own Flow project and its own numbered
+      output folder, so two videos' beats can never collide.</div>
+
+    <div class="row">
+      <input type="text" id="sheet-name" placeholder="new video name…">
+      <button id="sheet-new-btn" style="flex:0 0 auto">Create new session</button>
+    </div>
+    <div id="session-msg"></div>
+
+    <div class="sheet-divider">or continue</div>
+    <div class="session-list" id="session-list"></div>
+  </div>
+</div>
+
+<div class="overlay" id="detail-overlay">
+  <div class="sheet detail">
+    <div class="detail-head">
+      <span class="beat-tag" id="dt-tag">beat 000</span>
+      <button class="detail-close" id="detail-close-btn" title="Close">✕</button>
+    </div>
+    <div class="detail-body">
+      <div class="detail-img" id="dt-img"></div>
+      <div class="detail-field">
+        <div class="dt-label">Narration</div>
+        <div class="dt-val" id="dt-narration"></div>
+      </div>
+      <div class="detail-field">
+        <div class="dt-label">Prompt sent to Flow</div>
+        <div class="dt-val mono" id="dt-prompt"></div>
+      </div>
+      <div class="detail-field" id="dt-error-wrap" style="display:none">
+        <div class="dt-label">Last error</div>
+        <div class="dt-val mono" id="dt-error"></div>
+      </div>
+    </div>
+    <div class="detail-actions">
+      <button class="secondary" id="dt-cancel-btn">Close</button>
+      <button class="danger" id="dt-regen-btn">Regenerate this beat</button>
+    </div>
+  </div>
+</div>
+
+<header>
+  <div class="brand">
+    <span class="glyph">F</span>
+    <h1>Flow Image Automation</h1>
+  </div>
+  <span id="status-badge" class="badge">idle</span>
+  <span id="session-badge" class="badge" style="display:none"></span>
+  <button id="switch-btn" class="secondary" style="padding:5px 11px;font-size:11.5px"
+          title="Pick a different session, or start a new one">Change session</button>
+  <span id="paths-badge" class="badge"></span>
+</header>
+
+<main>
+
+  <div class="split">
+
+    <section class="panel" id="setup-panel">
+      <h2>Setup</h2>
+      <div id="setup-list"></div>
+      <div class="row" style="margin-top:11px">
+        <button id="check-btn" class="secondary">Check again</button>
+        <button id="login-btn" class="secondary">Sign in</button>
+        <button id="project-btn" class="secondary" title="List and pick an existing Flow project">Choose</button>
+      </div>
+      <div id="project-picker" style="display:none; margin-top:9px"></div>
+    </section>
+
+    <section class="panel flexible">
+      <h2>
+        Prompts
+        <span id="dirty-flag" class="dirty-flag">unsaved</span>
+      </h2>
+      <div id="prompt-alert"></div>
+      <div id="save-feedback"></div>
+      <textarea id="prompts" spellcheck="false" placeholder="BEAT 1&#10;&quot;narration line — reference only, never sent to Flow&quot;&#10;&#10;The actual image prompt for this beat...&#10;&#10;BEAT 2&#10;&quot;next narration&quot;&#10;&#10;The next image prompt..."></textarea>
+      <div class="row" style="margin-top:8px">
+        <button id="upload-btn" class="secondary">Upload</button>
+        <input type="file" id="upload-input" accept=".txt,text/plain" style="display:none">
+        <button id="save-btn" class="secondary">Save</button>
+        <button id="reload-btn" class="ghost">Reload</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Run</h2>
+
+      <label for="prompts-file">Prompts file</label>
+      <div class="path-row">
+        <input type="text" id="prompts-file" spellcheck="false"
+               placeholder="type a path, or Browse…">
+        <button id="browse-prompts" class="secondary" title="Pick a prompts file on this computer">Browse…</button>
+      </div>
+
+      <label for="output-dir" style="margin-top:8px">Output folder</label>
+      <div class="path-row">
+        <input type="text" id="output-dir" spellcheck="false"
+               placeholder="type a path, or Browse…">
+        <button id="browse-output" class="secondary" title="Pick where images are saved on this computer">Browse…</button>
+      </div>
+
+      <div class="save-to-row">
+        <div class="save-to" id="save-to"></div>
+        <button id="open-folder-btn" class="ghost" title="Reveal this folder on your computer">Open folder</button>
+      </div>
+
+      <div class="row" style="margin-top:9px">
+        <div class="field">
+          <label for="mode">What to run</label>
+          <select id="mode">
+            <option value="resume">Remaining beats (resume)</option>
+            <option value="retry_failed">Only failed beats</option>
+            <option value="only">Specific beats…</option>
+            <option value="no_resume">Everything (re-generates all)</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:96px">
+          <label for="limit">Limit</label>
+          <input type="number" id="limit" min="1" placeholder="all">
+        </div>
+      </div>
+
+      <div id="only-wrap" style="display:none; margin-top:9px">
+        <label for="only">Which beats</label>
+        <input type="text" id="only" placeholder="5,12,40-45" spellcheck="false">
+      </div>
+
+      <div id="run-estimate"></div>
+
+      <div class="row" style="margin-top:11px">
+        <button id="dry-btn" class="secondary">Dry run</button>
+        <button id="start-btn">Start</button>
+        <button id="stop-btn" class="danger" disabled>Stop</button>
+      </div>
+    </section>
+
+  </div>
+
+  <div class="split right">
+
+    <section class="panel">
+      <h2>Progress</h2>
+
+      <div class="stats">
+        <div class="stat ok"><div class="n" id="c-success">0</div><div class="k">done</div></div>
+        <div class="stat error"><div class="n" id="c-failed">0</div><div class="k">failed</div></div>
+        <div class="stat pending"><div class="n" id="c-pending">0</div><div class="k">pending</div></div>
+        <div class="stat"><div class="n" id="c-total">0</div><div class="k">beats</div></div>
+      </div>
+
+      <div class="progress-wrap">
+        <div class="progress"><div id="bar"></div></div>
+        <div class="progress-meta">
+          <span id="progress-text">not running</span>
+          <span id="eta-text"></span>
+        </div>
+      </div>
+
+      <div id="current-wrap"></div>
+      <div id="run-alert"></div>
+    </section>
+
+    <section class="panel flexible">
+      <h2>Images <span class="count" id="images-count">0</span></h2>
+      <div id="gaps-alert"></div>
+      <div class="img-toolbar">
+        <input type="text" id="beat-search" placeholder="Search narration or prompt…">
+        <div class="chip-group" id="status-filter">
+          <button class="chip active" data-filter="all">All</button>
+          <button class="chip" data-filter="success">Done</button>
+          <button class="chip" data-filter="outstanding">Outstanding</button>
+          <button class="chip" data-filter="failed">Failed</button>
+        </div>
+      </div>
+      <div class="beats" id="beats"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Activity</h2>
+      <div class="log" id="log"></div>
+    </section>
+
+  </div>
+
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let polling = null;
+let promptsDirty = false;
+let lastLogCount = 0;
+
+// Images panel: the full beat list from the last poll, plus the current
+// search/status filter. Kept separate from rendering so filtering never
+// needs another round-trip to the server.
+let lastBeats = [];
+let lastToken = '';
+let beatFilter = 'all';
+let beatSearch = '';
+
+// Edge-detected run transitions, for the finish notification: fires once
+// per run, only for a run this page actually watched happen (never on load,
+// so opening the page never announces a run that finished hours ago).
+let wasRunning = false;
+
+function hex(str) {
+  return Array.from(new TextEncoder().encode(str))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function fmtDuration(seconds) {
+  if (seconds == null) return '';
+  seconds = Math.round(seconds);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function compressRanges(nums) {
+  if (!nums || !nums.length) return '';
+  const sorted = [...nums].sort((a, b) => a - b);
+  const out = [];
+  let start = sorted[0], prev = sorted[0];
+  for (const n of sorted.slice(1)) {
+    if (n === prev + 1) { prev = n; continue; }
+    out.push(start === prev ? `${start}` : `${start}-${prev}`);
+    start = prev = n;
+  }
+  out.push(start === prev ? `${start}` : `${start}-${prev}`);
+  return out.join(', ');
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  let body = null;
+  try { body = await res.json(); } catch (e) { body = null; }
+  if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status}`);
+  return body;
+}
+
+function currentPaths() {
+  return {
+    prompts_file: $('prompts-file').value.trim(),
+    output_dir: $('output-dir').value.trim()
+  };
+}
+
+// The editor is an in-browser buffer; a run always reads the prompts FILE
+// from disk. Whenever those two can differ, say so loudly — a silent
+// divergence means the user watches a run generate the previous file's
+// prompts and has no way to see why.
+function setDirty(value) {
+  promptsDirty = value;
+  $('dirty-flag').classList.toggle('on', value);
+}
+
+// Paths are stored so the rest of the page has one source of truth for the
+// chosen session, but they are deliberately NOT restored on load: every open
+// starts at the session chooser (or reattaches to a live run) rather than
+// silently resuming whichever video happened to be open last.
+const STORE = 'flow-automation-paths';
+
+function savePaths() {
+  try { localStorage.setItem(STORE, JSON.stringify(currentPaths())); } catch (e) {}
+}
+
+async function refresh() {
+  const p = currentPaths();
+  const q = new URLSearchParams(p).toString();
+  let data;
+  try {
+    data = await api('/api/state?' + q);
+  } catch (e) {
+    $('status-badge').textContent = 'server unreachable';
+    return;
+  }
+  render(data);
+}
+
+function render(data) {
+  const run = data.run;
+
+  // header
+  const badge = $('status-badge');
+  if (run.running) {
+    badge.textContent = run.stop_requested ? 'stopping…' : 'running';
+    badge.className = 'badge live';
+  } else {
+    badge.textContent = 'idle';
+    badge.className = 'badge';
+  }
+  $('paths-badge').textContent = data.output_dir;
+  $('paths-badge').title = data.output_dir;
+
+  // Name the active session right next to the control that changes it, so
+  // "which video am I looking at" and "how do I switch" sit together.
+  const slug = (data.output_dir || '').split(/[\\/]/).filter(Boolean).pop();
+  if (slug) {
+    $('session-badge').textContent = slug;
+    $('session-badge').title = 'Current session';
+    $('session-badge').style.display = '';
+  }
+
+  // State plainly where images land, and whether that folder exists yet —
+  // a typo in the box otherwise looks identical to a correct path right up
+  // until a run writes hundreds of images somewhere unexpected.
+  $('save-to').innerHTML =
+    `<span class="to-label">Images save to</span> <span>${escapeHtml(data.output_dir)}</span>`
+    + (data.output_dir_exists
+        ? ` <span class="to-label">· ${data.output_file_count} file(s) there now</span>`
+        : ` <span class="to-new">· folder will be created</span>`);
+  $('save-to').title = data.output_dir;
+
+  // buttons
+  $('start-btn').disabled = run.running;
+  $('dry-btn').disabled = run.running;
+  $('stop-btn').disabled = !run.running || run.stop_requested;
+
+  // counts
+  const c = data.counts || {};
+  $('c-success').textContent = c.success || 0;
+  $('c-failed').textContent = c.failed || 0;
+  // "stale" beats hold an image generated from older prompt text; the run
+  // will regenerate them, so they are outstanding work, not done work.
+  $('c-pending').textContent =
+    (c.pending || 0) + (c.missing_file || 0) + (c.stale || 0);
+  $('c-total').textContent = data.beats.length;
+  $('images-count').textContent = data.beats.length;
+
+  // How long the rest will probably take, from this session's own history —
+  // answers "should I start this now" before a 3-6 hour batch commits to it.
+  const outstanding = (c.pending || 0) + (c.missing_file || 0)
+    + (c.failed || 0) + (c.stale || 0);
+  if (!run.running && outstanding && data.avg_duration_seconds) {
+    const est = outstanding * data.avg_duration_seconds;
+    $('run-estimate').innerHTML =
+      `<span class="est-n">${outstanding}</span> beat(s) outstanding ·
+       ~${fmtDuration(data.avg_duration_seconds)}/beat from this session's
+       history · <span class="est-n">~${fmtDuration(est)}</span> estimated`;
+  } else if (!run.running && outstanding) {
+    $('run-estimate').innerHTML =
+      `<span class="est-n">${outstanding}</span> beat(s) outstanding · no
+       time estimate yet (nothing has finished in this session)`;
+  } else {
+    $('run-estimate').innerHTML = '';
+  }
+
+  // progress
+  const total = run.selected_count || 0;
+  const done = run.done_count || 0;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  $('bar').style.width = pct + '%';
+  $('progress-text').textContent = run.running
+    ? `${done} / ${total} this run (${pct}%)`
+    : (run.result ? 'finished' : 'not running');
+  $('eta-text').textContent = run.running && run.eta_seconds
+    ? 'ETA ' + fmtDuration(run.eta_seconds) : '';
+
+  // current beat (or a cooldown pause)
+  const cw = $('current-wrap');
+  if (run.current && run.current.cooldown) {
+    const cur = run.current;
+    cw.innerHTML = `<div class="current" style="border-left-color:var(--warn)">
+      <span class="beat" style="color:var(--warn)">Cooldown ${cur.attempt}/${cur.max_attempts}</span>
+      <div class="txt">Several beats failed in a row — pausing ${cur.seconds}s in
+        case it's transient, then trying again. Stop cancels immediately.</div>
+    </div>`;
+  } else if (run.current) {
+    const cur = run.current;
+    cw.innerHTML = `<div class="current">
+      <span class="beat">beat ${String(cur.index).padStart(3,'0')}</span>
+      <span style="color:var(--muted)"> — ${cur.position} of ${cur.total}</span>
+      <div class="txt">${escapeHtml(cur.narration || cur.prompt)}</div>
+    </div>`;
+  } else {
+    cw.innerHTML = '';
+  }
+
+  // alerts
+  let alert = '';
+  if (run.error) alert += `<div class="alert error">${escapeHtml(run.error)}</div>`;
+  if (run.result && run.result.aborted_reason)
+    alert += `<div class="alert warn">${escapeHtml(run.result.aborted_reason)}</div>`;
+  $('run-alert').innerHTML = alert;
+
+  $('prompt-alert').innerHTML = data.prompts_error
+    ? `<div class="alert error">${escapeHtml(data.prompts_error)}</div>` : '';
+
+  $('gaps-alert').innerHTML = (data.gaps && data.gaps.length)
+    ? `<div class="alert warn">Beat numbers missing from the file: ${compressRanges(data.gaps)}
+       — fine if intentional, worth a look if not.</div>` : '';
+
+  // log
+  if (run.log.length !== lastLogCount) {
+    lastLogCount = run.log.length;
+    const el = $('log');
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    el.innerHTML = run.log.map(l =>
+      `<div><span class="t">${l.time}</span><span class="${l.level}">${escapeHtml(l.message)}</span></div>`
+    ).join('');
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  }
+
+  // beats
+  lastBeats = data.beats;
+  lastToken = hex(data.output_dir);
+  renderBeats();
+
+  // A finished run gets a notification/sound exactly once, and only for a
+  // run this page actually watched transition into "running" — never for
+  // one that was already finished before the page ever polled.
+  if (wasRunning && !run.running) notifyRunFinished(run);
+  wasRunning = run.running;
+
+  if (!run.running && polling) {
+    clearInterval(polling);
+    polling = setInterval(refresh, 4000);
+  }
+}
+
+const STATUS_LABEL = {
+  failed: 'failed', missing_file: 'file missing', stale: 'prompt changed',
+  pending: 'not generated',
+};
+
+function beatCardHtml(b) {
+  const n = String(b.index).padStart(3, '0');
+  const thumb = b.file
+    ? `<img loading="lazy" src="/img/${lastToken}/${encodeURIComponent(b.file)}" alt="beat ${n}">`
+    : (STATUS_LABEL[b.status] || 'not generated');
+  const cap = b.narration || b.prompt.slice(0, 60);
+  return `<div class="beat-card ${b.status}" data-index="${b.index}"
+             title="${escapeHtml(b.error || cap)}">
+    <div class="thumb">${thumb}</div>
+    <div class="meta">
+      <span class="dot ${b.status}"></span>
+      <span class="num">${n}</span>
+      <span class="cap">${escapeHtml(cap)}</span>
+    </div>
+  </div>`;
+}
+
+function matchesFilter(b) {
+  if (beatFilter === 'success' && b.status !== 'success') return false;
+  if (beatFilter === 'failed' && b.status !== 'failed') return false;
+  if (beatFilter === 'outstanding'
+      && !['pending', 'missing_file', 'stale', 'failed'].includes(b.status))
+    return false;
+  if (beatSearch) {
+    const hay = ((b.narration || '') + ' ' + b.prompt).toLowerCase();
+    if (!hay.includes(beatSearch)) return false;
+  }
+  return true;
+}
+
+function renderBeats() {
+  if (!lastBeats.length) {
+    $('beats').innerHTML = '<div class="empty">No beats yet — add prompts and save.</div>';
+    return;
+  }
+  const shown = lastBeats.filter(matchesFilter);
+  $('beats').innerHTML = shown.length
+    ? shown.map(beatCardHtml).join('')
+    : `<div class="empty">No beats match${beatSearch ? ' "' + escapeHtml(beatSearch) + '"' : ''}.</div>`;
+  $('beats').querySelectorAll('.beat-card').forEach(card =>
+    card.addEventListener('click', () =>
+      openBeatDetail(Number(card.dataset.index)))
+  );
+}
+
+$('beat-search').addEventListener('input', () => {
+  beatSearch = $('beat-search').value.trim().toLowerCase();
+  renderBeats();
+});
+
+$('status-filter').addEventListener('click', (ev) => {
+  const chip = ev.target.closest('.chip');
+  if (!chip) return;
+  beatFilter = chip.dataset.filter;
+  $('status-filter').querySelectorAll('.chip').forEach(c =>
+    c.classList.toggle('active', c === chip));
+  renderBeats();
+});
+
+// -- beat detail + regenerate-one-beat ---------------------------------
+
+function openBeatDetail(index) {
+  const b = lastBeats.find(x => x.index === index);
+  if (!b) return;
+
+  const n = String(b.index).padStart(3, '0');
+  $('dt-tag').textContent = 'beat ' + n;
+  $('dt-narration').textContent = b.narration || '(no narration recorded)';
+  $('dt-prompt').textContent = b.prompt;
+
+  $('dt-img').innerHTML = b.file
+    ? `<img src="/img/${lastToken}/${encodeURIComponent(b.file)}" alt="beat ${n}">`
+    : escapeHtml(STATUS_LABEL[b.status] || 'not generated');
+
+  if (b.error) {
+    $('dt-error-wrap').style.display = '';
+    $('dt-error').textContent = b.error;
+  } else {
+    $('dt-error-wrap').style.display = 'none';
+  }
+
+  $('dt-regen-btn').dataset.index = String(b.index);
+  $('detail-overlay').classList.add('on');
+}
+
+function closeBeatDetail() {
+  $('detail-overlay').classList.remove('on');
+}
+
+$('detail-close-btn').addEventListener('click', closeBeatDetail);
+$('dt-cancel-btn').addEventListener('click', closeBeatDetail);
+$('detail-overlay').addEventListener('click', (ev) => {
+  if (ev.target.id === 'detail-overlay') closeBeatDetail();
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && $('detail-overlay').classList.contains('on'))
+    closeBeatDetail();
+});
+
+$('dt-regen-btn').addEventListener('click', async () => {
+  const index = $('dt-regen-btn').dataset.index;
+  closeBeatDetail();
+  // Reuses start()'s own dirty-save guard and confirm-for-no_resume logic by
+  // going through the same function, just with this one beat substituted for
+  // whatever the Run panel's own mode/only/limit controls currently hold —
+  // so a one-off regenerate can never accidentally pick up "everything".
+  await start(false, {mode: 'only', only: String(index), limit: null});
+});
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+}
+
+// -- setup ------------------------------------------------------------
+
+const MARK = {ok: '✓', fail: '✗', warn: '!', unknown: '?'};
+
+async function refreshSetup() {
+  try {
+    const p = currentPaths();
+    const data = await api('/api/setup?' + new URLSearchParams(
+      {prompts_file: p.prompts_file}).toString());
+
+    $('setup-list').innerHTML = data.checks.map(c => `
+      <div class="check ${c.status}">
+        <span class="mark">${MARK[c.status] || '?'}</span>
+        <div class="body">
+          <div class="label">${escapeHtml(c.label)}</div>
+          <div class="detail">${escapeHtml(c.detail)}</div>
+          ${c.fix && c.status !== 'ok'
+            ? `<div class="fix">${escapeHtml(c.fix)}</div>` : ''}
+        </div>
+      </div>`).join('');
+
+    const panel = $('setup-panel');
+    panel.style.borderColor = data.ready ? 'var(--border)' : 'rgba(248,113,113,.5)';
+  } catch (e) {
+    $('setup-list').innerHTML =
+      `<div class="alert error">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+$('check-btn').addEventListener('click', refreshSetup);
+
+$('login-btn').addEventListener('click', async () => {
+  try {
+    await api('/api/setup/login', {method: 'POST'});
+    lastLogCount = -1;
+    if (polling) clearInterval(polling);
+    polling = setInterval(() => { refresh(); }, 1500);
+    refresh();
+  } catch (e) {
+    $('setup-list').insertAdjacentHTML('afterbegin',
+      `<div class="alert error">${escapeHtml(e.message)}</div>`);
+  }
+});
+
+$('project-btn').addEventListener('click', async () => {
+  const box = $('project-picker');
+  box.style.display = 'block';
+  box.innerHTML = '<div class="hint">Looking for projects…</div>';
+  try {
+    const data = await api('/api/setup/projects', {method: 'POST'});
+    if (!data.projects.length) {
+      box.innerHTML = `<div class="alert warn">No projects found. Create one in
+        the Chrome window, or set FLOW_AUTO_CREATE_PROJECT=true in .env.</div>`;
+      return;
+    }
+    box.innerHTML = data.projects.map(u =>
+      `<button class="project-option" data-url="${escapeHtml(u)}">${escapeHtml(u)}</button>`
+    ).join('');
+    box.querySelectorAll('.project-option').forEach(btn =>
+      btn.addEventListener('click', async () => {
+        try {
+          await api('/api/setup/project', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url: btn.dataset.url})
+          });
+          box.innerHTML = '<div class="alert ok">Saved to .env.</div>';
+          refreshSetup();
+        } catch (e) {
+          box.innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
+        }
+      })
+    );
+  } catch (e) {
+    box.innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
+  }
+});
+
+// -- prompts ----------------------------------------------------------
+
+$('mode').addEventListener('change', () => {
+  $('only-wrap').style.display = $('mode').value === 'only' ? 'block' : 'none';
+});
+
+$('prompts').addEventListener('input', () => setDirty(true));
+
+/* Writes the editor to the prompts file. Returns true only if the file is
+   on disk afterwards, so callers that must not proceed on a failed write
+   (notably start()) can check. */
+async function savePrompts() {
+  const p = currentPaths();
+  const text = $('prompts').value;
+
+  if (!text.trim()) {
+    $('save-feedback').innerHTML =
+      `<div class="alert warn">Nothing to save — the editor is empty.</div>`;
+    return false;
+  }
+
+  try {
+    const res = await api('/api/prompts', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({...p, text})
+    });
+    setDirty(false);
+    // A separate element from #prompt-alert on purpose: that one reflects the
+    // file's current parse status and is rewritten by every poll (render()),
+    // which would otherwise wipe this confirmation within seconds.
+    if (res.valid) {
+      $('save-feedback').innerHTML =
+        `<div class="alert ok">Saved — ${res.count} beat(s) parsed${
+          res.gaps && res.gaps.length ? ', gaps at ' + compressRanges(res.gaps) : ''}.</div>`;
+    } else {
+      $('save-feedback').innerHTML =
+        `<div class="alert error">Saved, but: ${escapeHtml(res.error)}</div>`;
+    }
+    refresh();
+    return true;
+  } catch (e) {
+    $('save-feedback').innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
+    return false;
+  }
+}
+
+$('save-btn').addEventListener('click', savePrompts);
+
+$('reload-btn').addEventListener('click', async () => {
+  if (promptsDirty && !confirm('Discard unsaved changes to the prompts?')) return;
+  await fetchPromptsText();
+});
+
+$('upload-btn').addEventListener('click', () => {
+  if (promptsDirty && !confirm('Discard unsaved changes to the prompts?')) return;
+  $('upload-input').click();
+});
+
+$('upload-input').addEventListener('change', async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = ''; // let choosing the same file again still fire 'change'
+  if (!file) return;
+
+  if (file.size > 5 * 1024 * 1024) {
+    $('save-feedback').innerHTML =
+      `<div class="alert error">File too large (${(file.size/1024/1024).toFixed(1)}MB) — prompts files are plain text, well under this.</div>`;
+    return;
+  }
+
+  const text = await file.text();
+  $('prompts').value = text;
+  setDirty(true);
+  // Name the destination: an upload fills the editor, and Save writes it to
+  // whatever Prompts file is currently set — which is not necessarily the
+  // file that was just picked.
+  const dest = ($('prompts-file').value || '').split(/[\\/]/).pop();
+  $('save-feedback').innerHTML =
+    `<div class="alert warn">Loaded "${escapeHtml(file.name)}"
+     (${text.length.toLocaleString()} chars). Save writes it to
+     <strong>${escapeHtml(dest)}</strong>.</div>`;
+});
+
+async function fetchPromptsText() {
+  // Reads the file verbatim. Never reconstruct it from parsed beats — that
+  // would rewrite a plain one-per-line file into BEAT format behind the
+  // user's back, and would lose anything the parser skips (comments,
+  // spacing, an unparseable section being edited).
+  const p = currentPaths();
+  try {
+    const data = await api('/api/prompts?' + new URLSearchParams(
+      {prompts_file: p.prompts_file}).toString());
+    $('prompts').value = data.text || '';
+    setDirty(false);
+  } catch (e) { /* leave the editor alone on failure */ }
+}
+
+// -- run --------------------------------------------------------------
+
+// -- finish notification ------------------------------------------------
+
+// Runs here are 3-6 hours unattended; permission is asked for at the moment
+// a run actually starts (never on page load, which would greet the user
+// with an unsolicited browser prompt before they've done anything).
+let notifyAsked = false;
+
+function requestNotifyPermission() {
+  if (notifyAsked || typeof Notification === 'undefined') return;
+  notifyAsked = true;
+  if (Notification.permission === 'default') Notification.requestPermission();
+}
+
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.55);
+  } catch (e) { /* audio unavailable — the desktop notification still fires */ }
+}
+
+function notifyRunFinished(run) {
+  const r = run.result || {};
+  const summary = run.error ? run.error
+    : r.aborted_reason ? r.aborted_reason
+    : `${r.succeeded ?? '?'} succeeded, ${r.failed ?? '?'} failed`;
+
+  beep();
+
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    try {
+      new Notification('Flow Image Automation — run finished', {body: summary});
+    } catch (e) { /* some platforms restrict this outside a user gesture */ }
+  }
+}
+
+async function start(dry, overrides) {
+  // A run reads the prompts FILE, not this editor. Persist any pending edits
+  // first, or an upload/typo-fix the user is looking at gets silently ignored
+  // and the previous file's prompts are generated instead.
+  if (promptsDirty) {
+    const ok = await savePrompts();
+    if (!ok) {
+      $('save-feedback').innerHTML =
+        `<div class="alert error">Your prompt changes could not be saved, so nothing was started.
+         A run always uses the saved file, never the editor.</div>`;
+      return;
+    }
+  }
+
+  // A one-off "regenerate this beat" passes its own mode/only/limit rather
+  // than reading the Run panel's controls, so it can never accidentally pick
+  // up whatever "Everything" / a stale Limit happens to be sitting in them.
+  const mode = (overrides && overrides.mode) || $('mode').value;
+  const only = mode === 'only'
+    ? ((overrides && overrides.only) ?? $('only').value) : null;
+  const limit = (overrides && 'limit' in overrides)
+    ? overrides.limit : ($('limit').value || null);
+
+  const p = currentPaths();
+  const body = {...p, mode, only, limit, dry_run: !!dry};
+
+  if (!dry && mode === 'no_resume') {
+    if (!confirm('This regenerates EVERY beat, including ones already done, and spends credits on all of them. Continue?')) return;
+  }
+
+  requestNotifyPermission();
+
+  try {
+    await api('/api/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    lastLogCount = -1;
+    if (polling) clearInterval(polling);
+    polling = setInterval(refresh, 1500);
+    refresh();
+  } catch (e) {
+    $('run-alert').innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+$('start-btn').addEventListener('click', () => start(false));
+$('dry-btn').addEventListener('click', () => start(true));
+
+$('stop-btn').addEventListener('click', async () => {
+  try {
+    await api('/api/stop', {method: 'POST'});
+    refresh();
+  } catch (e) {
+    $('run-alert').innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
+  }
+});
+
+// -- path pickers -----------------------------------------------------
+
+/* The picker is opened by the server process, not the browser: a browser
+   never reveals a real filesystem path (it reports C:\fakepath\...), and the
+   File System Access API returns an opaque handle rather than a path. The
+   server runs on this same machine, so its native dialog is the only way to
+   turn a click into an actual path the batch can write to. */
+async function browseFor(kind, targetId) {
+  const btn = kind === 'directory' ? $('browse-output') : $('browse-prompts');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Opening…';
+  try {
+    const res = await api('/api/browse', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({kind, initial: $(targetId).value || null})
+    });
+    // Cancelling must leave the existing path alone, not blank it.
+    if (res.cancelled || !res.path) return;
+    $(targetId).value = res.path;
+    savePaths();
+    await fetchPromptsText();
+    await refresh();
+    await refreshSetup();
+  } catch (e) {
+    $('run-alert').innerHTML =
+      `<div class="alert error">${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+$('browse-prompts').addEventListener('click', () => browseFor('file', 'prompts-file'));
+$('browse-output').addEventListener('click', () => browseFor('directory', 'output-dir'));
+
+$('open-folder-btn').addEventListener('click', async () => {
+  const btn = $('open-folder-btn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  try {
+    await api('/api/open-folder', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({output_dir: $('output-dir').value})
+    });
+  } catch (e) {
+    btn.textContent = 'Not found';
+    setTimeout(() => { btn.textContent = original; }, 1800);
+    return;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// -- session chooser --------------------------------------------------
+
+function openSessionSheet() {
+  $('session-overlay').classList.add('on');
+  $('session-msg').innerHTML = '';
+  loadSessions();
+}
+
+function closeSessionSheet() {
+  $('session-overlay').classList.remove('on');
+}
+
+async function loadSessions() {
+  const box = $('session-list');
+  box.innerHTML = '<div class="hint">Looking for previous sessions…</div>';
+  try {
+    const data = await api('/api/sessions');
+    if (!data.sessions.length) {
+      box.innerHTML = '<div class="hint">No previous sessions yet.</div>';
+      return;
+    }
+    box.innerHTML = data.sessions.map(s => {
+      const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
+      const cls = s.error ? 'broken' : (s.total && s.done >= s.total ? 'complete' : '');
+      const meta = s.error
+        ? escapeHtml(s.error)
+        : `${s.done} of ${s.total} beat(s) generated`;
+      return `<button class="session ${cls}" data-p="${escapeHtml(s.prompts_file)}"
+                 data-o="${escapeHtml(s.output_dir)}">
+        <span class="s-left">
+          <span class="s-name">${escapeHtml(s.slug)}</span>
+          <div class="s-meta">${meta}</div>
+        </span>
+        <span class="s-pct">${s.error ? '!' : pct + '%'}</span>
+      </button>`;
+    }).join('');
+    box.querySelectorAll('.session').forEach(btn =>
+      btn.addEventListener('click', () =>
+        useSession(btn.dataset.p, btn.dataset.o))
+    );
+  } catch (e) {
+    box.innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+/* Point the whole page at one session and load it. Everything downstream
+   (prompts text, beats, setup checks) is derived from these two paths, so
+   this is the single place a session becomes "the current one". */
+async function useSession(promptsFile, outputDir) {
+  $('prompts-file').value = promptsFile;
+  $('output-dir').value = outputDir;
+  savePaths();
+  closeSessionSheet();
+  await fetchPromptsText();
+  await refresh();
+  await refreshSetup();
+}
+
+$('switch-btn').addEventListener('click', openSessionSheet);
+
+$('sheet-new-btn').addEventListener('click', async () => {
+  const box = $('session-msg');
+  const name = $('sheet-name').value.trim();
+  if (!name) {
+    box.innerHTML = '<div class="alert warn">Give the video a name first.</div>';
+    return;
+  }
+  box.innerHTML = `<div class="alert warn">Creating a new Flow project — this can
+    take anywhere from a few seconds to over two minutes. Please wait rather
+    than clicking again.</div>`;
+  try {
+    await api('/api/setup/new-session', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name})
+    });
+    const wait = setInterval(async () => {
+      const state = await api('/api/state?' + new URLSearchParams(currentPaths()).toString());
+      if (state.run.running) return;
+      clearInterval(wait);
+      const r = state.run.result;
+      if (r && r.new_session) {
+        $('sheet-name').value = '';
+        // Even when Flow's own confirmation times out, the local paths are
+        // valid immediately — adopt the session rather than making the user
+        // redo the naming, and say so if the project half is unconfirmed.
+        if (!r.project_url) {
+          alert('Local files for "' + r.slug + '" are ready, but the new Flow '
+            + 'project did not confirm in time. Wait a minute, then use '
+            + 'Choose in the Setup panel to attach it.');
+        }
+        await useSession(r.prompts_file, r.output_dir);
+      } else if (state.run.error) {
+        box.innerHTML = `<div class="alert error">${escapeHtml(state.run.error)}</div>`;
+      }
+    }, 1500);
+  } catch (e) {
+    box.innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
+  }
+});
+
+// -- boot -------------------------------------------------------------
+
+['prompts-file', 'output-dir'].forEach(id =>
+  $(id).addEventListener('change', () => {
+    savePaths();
+    fetchPromptsText();
+    refresh();
+  })
+);
+
+(async function init() {
+  // A run in progress owns the page. Reattaching matters most for the long
+  // unattended batches this tool exists for: an accidental refresh three
+  // hours into a 300-image run must not hide it behind a chooser.
+  let attached = false;
+  try {
+    const s = await api('/api/sessions');
+    if (s.active) {
+      $('prompts-file').value = s.active.prompts_file;
+      $('output-dir').value = s.active.output_dir;
+      savePaths();
+      attached = true;
+    }
+  } catch (e) { /* fall through to the chooser */ }
+
+  // Setup (packages/Chrome/sign-in/project) is environment state, not
+  // session state, so it's safe and useful to check before any session is
+  // chosen. Everything else stays deliberately untouched below.
+  await refreshSetup();
+
+  if (attached) {
+    await fetchPromptsText();
+    await refresh();
+    polling = setInterval(refresh, 4000);
+  } else {
+    // No session chosen yet: leave the editor, gallery, and counts exactly
+    // as their empty markup defaults, and open the chooser on top of that.
+    // Previously this branch still loaded the server's DEFAULT configured
+    // prompts/output path into the page first — on a machine whose default
+    // pointed at a leftover video, that content was visible through the
+    // chooser's translucent backdrop, looking like unexplained random data.
+    // Nothing about the current video may render until one is actually
+    // picked.
+    openSessionSheet();
+  }
+})();
+</script>
+
+</body>
+</html>
