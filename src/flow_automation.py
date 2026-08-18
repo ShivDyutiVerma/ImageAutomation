@@ -452,6 +452,41 @@ class FlowAutomation:
 
         return True
 
+    def _switch_to_create_tab(self):
+        """Click back to the Create tab if some other one (Agent
+        Instructions, Settings) is active instead.
+
+        Confirmed live (2026-08-18): the right-hand panel has at least
+        three tabs — Create, Agent Instructions, Settings — sharing the
+        same panel area, and it can end up parked on Agent Instructions
+        (observed right after a content-policy rejection) with neither a
+        prompt editor nor a Create button reachable at all. Without this,
+        wait_until_ready() would burn its full timeout waiting for controls
+        that were never going to appear on that tab, reload (which doesn't
+        change which tab is active), and burn the full timeout again — this
+        is what turned one beat into a 64-minute stall live. The tab
+        button's own text is its icon ligature immediately followed by
+        "Create" with no separator ("add_2Create"), which distinguishes it
+        from the actual submit button ("arrow_forwardCreate").
+        """
+
+        buttons = self.flow_page.locator("button")
+
+        for i in range(buttons.count()):
+
+            try:
+                text = buttons.nth(i).inner_text()
+            except Exception:
+                continue
+
+            if text.strip() == "add_2Create":
+                try:
+                    buttons.nth(i).click(timeout=2000)
+                    time.sleep(0.5)
+                except Exception:
+                    pass
+                return
+
     def _project_missing(self):
         """The 'Something went wrong. Back to projects.' screen Flow shows
         when a project ID no longer exists — deleted or expired server-side
@@ -475,8 +510,8 @@ class FlowAutomation:
         return "Something went wrong" in text and "Back to projects" in text
 
     def wait_until_ready(self, timeout=None):
-        """Poll until the page is usable, reloading once partway through the
-        timeout if it never becomes ready.
+        """Poll until the page is usable, trying a tab switch and then a
+        reload if it never becomes ready on its own.
 
         Confirmed live (2026-08-15): a tab left open for hours (in this case,
         across the host machine going to sleep mid-run) can get stuck
@@ -490,6 +525,7 @@ class FlowAutomation:
         timeout = timeout or config.READY_TIMEOUT
 
         start = time.time()
+        switched_tab = False
         reloaded = False
 
         while True:
@@ -510,7 +546,16 @@ class FlowAutomation:
 
             elapsed = time.time() - start
 
-            if not reloaded and elapsed > timeout / 2:
+            # Tried first and cheaply: most "not ready" cases seen live are
+            # the Agent Instructions tab being active instead of Create,
+            # which a reload doesn't fix (it doesn't change which tab is
+            # active) but a direct click does, in under a second.
+            if not switched_tab:
+
+                self._switch_to_create_tab()
+                switched_tab = True
+
+            elif not reloaded and elapsed > timeout / 2:
 
                 try:
                     self.flow_page.reload()
@@ -523,7 +568,8 @@ class FlowAutomation:
             if elapsed > timeout:
                 raise FlowGenerationError(
                     f"Flow UI not ready after {timeout}s "
-                    f"(no Create button or prompt editor found, even after a reload)."
+                    f"(no Create button or prompt editor found, even after "
+                    f"switching tabs and a reload)."
                 )
 
             time.sleep(1)
@@ -609,15 +655,19 @@ class FlowAutomation:
 
         button.click()
 
-    def _content_policy_message(self):
-        """The specific rejection line Flow shows when it refuses a prompt
-        on content-policy grounds ("This prompt might violate our policies
-        about generating harmful content related to minors." etc.), or None
-        if no such message is currently showing. Matched by substring
+    def _generation_failure_message(self):
+        """Whatever specific reason Flow's own on-page 'Failed' state gives
+        for a generation attempt — content policy, or anything else Flow
+        might report — read directly off the page rather than assumed, so
+        the actual message ends up in the log whatever it turns out to say,
+        not just the one wording seen so far (content policy). Returns None
+        if no such state is currently showing.
+
+        Matched by the "Failed" heading plus whatever line follows it,
         rather than a specific element/selector, since the exact markup is
         one more thing Google can change without notice (see
-        docs/FLOW_UI_NOTES.md) — the wording itself is the more stable
-        signal.
+        docs/FLOW_UI_NOTES.md) — the on-page wording itself is the more
+        stable signal.
         """
 
         try:
@@ -625,30 +675,35 @@ class FlowAutomation:
         except Exception:
             return None
 
-        for line in text.splitlines():
-            line = line.strip()
-            if "violate our policies" in line.lower():
-                return line
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+        for i, line in enumerate(lines):
+            if line == "Failed" and i + 1 < len(lines):
+                return lines[i + 1]
 
         return None
 
-    def wait_for_new_images(self, before, timeout=None, before_policy_message=None):
+    def wait_for_new_images(self, before, timeout=None, before_failure_message=None):
         """Wait until image URLs appear that weren't present before the click.
 
         Comparing sets rather than watching a fixed position means this works
         whether Flow prepends, appends, or reorders results, and it reveals how
         many images a single generation produces.
 
-        before_policy_message is whatever _content_policy_message() reported
-        right before this generation was started (see generate_image) — a
-        stale rejection banner from a *previous* prompt can still be on
-        screen for a moment after the next Create click, so only a message
-        that's new or different counts as this generation's own rejection.
-        Confirmed live (2026-08-18): four consecutive beats each burned the
-        full timeout and reported a generic "no new image" failure, when
-        Flow had actually rejected each one in seconds with an explicit
-        on-page reason — this makes that immediate and correctly labeled
-        instead.
+        before_failure_message is whatever _generation_failure_message()
+        reported right before this generation was started (see
+        generate_image) — a stale failure banner from a *previous* prompt
+        can still be on screen for a moment after the next Create click, so
+        only a message that's new or different counts as this generation's
+        own failure. Confirmed live (2026-08-18): four consecutive beats
+        each burned the full timeout and reported a generic "no new image"
+        failure, when Flow had actually rejected each one in seconds with
+        an explicit on-page reason — this makes that immediate and
+        correctly labeled instead. A message naming content policy
+        specifically is never retried (see generate_image); any other
+        message Flow gives is still reported accurately, but treated as
+        an ordinary retryable failure since there's no evidence it's
+        permanent.
         """
 
         timeout = timeout or config.GENERATION_TIMEOUT
@@ -657,10 +712,12 @@ class FlowAutomation:
 
         while True:
 
-            policy_message = self._content_policy_message()
+            failure_message = self._generation_failure_message()
 
-            if policy_message and policy_message != before_policy_message:
-                raise FlowContentPolicyError(policy_message)
+            if failure_message and failure_message != before_failure_message:
+                if "violate our policies" in failure_message.lower():
+                    raise FlowContentPolicyError(failure_message)
+                raise FlowGenerationError(f"Flow reported: {failure_message}")
 
             current = self.get_generated_urls()
 
@@ -714,13 +771,13 @@ class FlowAutomation:
         self.wait_until_ready()
 
         before = set(self.get_generated_urls())
-        before_policy_message = self._content_policy_message()
+        before_failure_message = self._generation_failure_message()
 
         self.fill_prompt(prompt)
         self.click_create()
 
         new_images = self.wait_for_new_images(
-            before, before_policy_message=before_policy_message
+            before, before_failure_message=before_failure_message
         )
 
         if len(new_images) > 1:
