@@ -25,6 +25,15 @@ STATUS_WARN = "warn"
 STATUS_UNKNOWN = "unknown"
 
 
+class ProjectCreationCancelled(RuntimeError):
+    """Raised by create_new_project() when should_cancel() returns True.
+
+    Distinct from a timeout/RuntimeError so a caller can tell "the user
+    chose to stop waiting" apart from "Flow never confirmed" — the former
+    isn't an error worth alarming about.
+    """
+
+
 def _check(check_id, label, status, detail, fix=None, action=None):
     return {
         "id": check_id,
@@ -429,13 +438,20 @@ def discover_projects():
             pass
 
 
-def create_new_project(timeout=150, poll=2):
+def create_new_project(timeout=150, poll=0.5, should_cancel=None):
     """Create a brand-new, empty Flow project and return its URL.
 
     Requires Chrome already running and signed in. Unlike normal startup
     (which only auto-creates when zero projects exist), this always creates
     one — it's for the explicit "start a new video" action, where the point
     is a guaranteed-empty project regardless of how many already exist.
+
+    should_cancel, if given, is a zero-arg callable polled once per `poll`
+    interval (so a caller — e.g. a page reload that no longer wants to wait
+    through Flow's own unpredictable completion time — can abandon the wait
+    quickly instead of blocking until `timeout`). The click itself already
+    happened by the time this is checked, so Flow keeps creating the project
+    server-side regardless; only *this process's wait* is abandoned.
 
     Clicks "New project" exactly once and waits, rather than retrying on
     timeout. Confirmed live (2026-08-15) that this click's completion time
@@ -447,6 +463,7 @@ def create_new_project(timeout=150, poll=2):
     way and is why this only ever clicks once.
     """
 
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import sync_playwright
 
     chrome_launcher.ensure_chrome_running(config.CDP_URL)
@@ -460,23 +477,44 @@ def create_new_project(timeout=150, poll=2):
             raise RuntimeError("Chrome has no browser context")
 
         context = browser.contexts[0]
-        page = context.new_page()
+        landing_url = config.FLOW_ORIGIN + config.FLOW_TOOLS_URL_MARKER
 
-        page.goto(config.FLOW_ORIGIN + config.FLOW_TOOLS_URL_MARKER)
-        page.wait_for_timeout(1500)
+        # A brand-new tab measured 11-21s to load Flow's landing page before
+        # any click even happens — almost all of it one-time renderer/DNS/TLS
+        # start-up cost, not Flow's own (separately confirmed, separately
+        # unpredictable) project-creation latency. Reusing a tab already open
+        # on that same origin measured 0.05-1.5s instead. Since this whole
+        # flow already holds the single-run lock, no other automation can be
+        # using these tabs concurrently, so reusing one here is safe.
+        page = None
+        needs_nav = True
 
-        buttons = page.locator("button")
-        target = None
-
-        for i in range(buttons.count()):
+        for candidate in context.pages:
             try:
-                if "New project" in buttons.nth(i).inner_text():
-                    target = buttons.nth(i)
+                if candidate.url.rstrip("/") == landing_url.rstrip("/"):
+                    page, needs_nav = candidate, False
                     break
+                if candidate.url.startswith(config.FLOW_ORIGIN):
+                    page = candidate
             except Exception:
                 continue
 
-        if target is None:
+        if page is None:
+            page = context.new_page()
+
+        if needs_nav:
+            page.goto(landing_url)
+
+        # Was a flat 1.5s sleep plus an N-round-trip Python loop over every
+        # button on the page (one inner_text() call each). A locator's own
+        # wait_for polls inside the browser instead of round-tripping from
+        # here per button, so it resolves the moment the button is actually
+        # there — often well under 1.5s — instead of always paying the full
+        # fixed pad regardless of how fast the landing page really rendered.
+        target = page.locator("button", has_text="New project").first
+        try:
+            target.wait_for(state="visible", timeout=8000)
+        except PlaywrightTimeoutError:
             raise RuntimeError(
                 "Could not find a 'New project' button on the Flow landing page."
             )
@@ -487,6 +525,13 @@ def create_new_project(timeout=150, poll=2):
         start = time.time()
 
         while time.time() - start < timeout:
+
+            if should_cancel and should_cancel():
+                raise ProjectCreationCancelled(
+                    "Cancelled — Flow may still finish creating this project "
+                    "in the background; use \"Choose project\" later if it "
+                    "shows up and you want it after all."
+                )
 
             try:
                 if config.FLOW_PROJECT_URL_MARKER in page.url:

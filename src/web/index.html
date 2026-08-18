@@ -6,40 +6,73 @@
 <title>Flow Image Automation</title>
 <style>
   :root {
-    /* Surfaces — a cool neutral ramp, each step a clear elevation change. */
-    --bg: #0a0d13;
-    --panel: #12171f;
-    --panel-2: #1a212c;
-    --panel-3: #212a38;
-    --border: #232d3c;
-    --border-strong: #35415a;
+    /* Surfaces. This tool sits inside a video post-production pipeline —
+       numbered frames, unattended multi-hour runs, hours spent watching it
+       work — so it's grounded in post-production/broadcast equipment
+       (color-grading suites, tally lights, timecode displays) rather than a
+       generic dark SaaS dashboard. Warm charcoal, not blue-black. */
+    --bg: #14120e;
+    --panel: #1c1813;
+    --panel-2: #26201a;
+    --panel-3: #322b21;
+    --border: #362f23;
+    --border-strong: #4d4330;
 
-    /* Text — three weights of emphasis, all AA-contrast on --panel. */
-    --text: #e9edf5;
-    --muted: #97a3b8;
+    /* Text — warm paper tones, three weights of emphasis, all AA-contrast
+       on --panel. */
+    --text: #f2ece1;
+    --muted: #b3a793;
     /* Tertiary text. Deliberately not darker than this: below roughly this
        lightness it drops under WCAG AA (4.5:1) on --panel at the small sizes
        it's used at (9.5–11px labels, captions, hints). */
-    --faint: #8a95a8;
+    --faint: #a4977f;
 
-    /* Accent + semantics. --accent is for borders/highlights/text on dark;
-       --accent-btn is the deeper fill a solid button needs for white label
-       text to clear 4.5:1 (the bright accent only reaches ~3.2:1). */
-    --accent: #5b8cff;
-    --accent-btn: #3b6fd4;
-    --accent-btn-hover: #4a7ce6;
-    --accent-soft: rgba(91, 140, 255, .14);
-    --ok: #34d399;
-    --ok-soft: rgba(52, 211, 153, .13);
-    --warn: #fbbf24;
-    --warn-soft: rgba(251, 191, 36, .13);
-    --error: #f87171;
-    --error-soft: rgba(248, 113, 113, .13);
-    --pending: #5a6577;
+    /* Accent: a tally/safelight amber — the warning light on recording gear,
+       the safelight in a darkroom. --accent is for borders/highlights/text
+       on dark; --accent-fill is the bright button fill, paired with
+       --accent-ink (near-black) rather than white, the way an amber
+       indicator light reads dark text, not light. */
+    --accent: #dea23e;
+    --accent-fill: #e6b354;
+    --accent-fill-hover: #efc470;
+    --accent-ink: #1c1407;
+    --accent-soft: rgba(222, 162, 62, .16);
 
-    --radius: 10px;
-    --radius-sm: 7px;
+    --ok: #92b25c;
+    --ok-soft: rgba(146, 178, 92, .15);
+    /* Semantic color is a deliberate three-step warm ramp, each step ~17°
+       apart in hue — amber accent (38°) → warn (21°) → error (8°) — reading
+       as rising severity, like a heat gradient. Kept clearly apart from the
+       accent on purpose: amber already means "active/selected/primary"
+       throughout this UI, so a warning needs its own identity rather than
+       competing with that for the same color. */
+    --warn: #d9743a;
+    --warn-soft: rgba(217, 116, 58, .15);
+    --error: #dd6353;
+    --error-soft: rgba(221, 99, 83, .15);
+    --pending: #6f6553;
+
+    /* Sharper, smaller radii than a typical soft SaaS card — a precision
+       instrument, not a friendly app icon. */
+    --radius: 6px;
+    --radius-sm: 4px;
     --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+    /* A second, distinct family for the few genuine headline moments (the
+       wordmark, the session-chooser title, a beat's number in its detail
+       view) — condensed and technical rather than the body face at a
+       bigger size. Bahnschrift ships with Windows 10+; elsewhere it falls
+       through to the same stack the body text uses, so nothing breaks,
+       it's just quieter — consistent with this project only having
+       verified behavior on Windows so far (see docs/PROGRESS.md). No
+       webfont: a network font fetch has no place in a tool built to keep
+       working through flaky connections during multi-hour runs. */
+    --display: Bahnschrift, "SF Compact Display", "Segoe UI Semibold", system-ui, sans-serif;
+  }
+
+  /* Long unattended runs are exactly the case reduced-motion accessibility
+     settings exist for — nothing here needs to keep moving. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   }
 
   * { box-sizing: border-box; }
@@ -68,17 +101,21 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    background: linear-gradient(180deg, var(--panel) 0%, #10151d 100%);
+    background: var(--panel);
   }
 
   .brand { display: flex; align-items: center; gap: 9px; margin-right: 2px; }
   .brand .glyph {
-    width: 22px; height: 22px; border-radius: 6px; flex: none;
-    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    width: 22px; height: 22px; border-radius: var(--radius-sm); flex: none;
+    background: var(--accent-fill);
     display: flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 800; color: #fff;
+    font-size: 12px; font-weight: 800; color: var(--accent-ink);
   }
-  h1 { font-size: 14px; margin: 0; font-weight: 650; letter-spacing: -.1px; white-space: nowrap; }
+  h1 {
+    font-family: var(--display);
+    font-size: 15px; margin: 0; font-weight: 700; letter-spacing: .5px;
+    text-transform: uppercase; white-space: nowrap;
+  }
 
   .badge {
     padding: 4px 10px;
@@ -102,11 +139,11 @@
   }
   .badge.live {
     background: var(--accent-soft);
-    border-color: rgba(91,140,255,.45);
-    color: #c3d7ff;
+    border-color: rgba(222,162,62,.45);
+    color: #f3d9a0;
   }
   .badge.live::before { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
-  .badge.ok { background: var(--ok-soft); border-color: rgba(52,211,153,.4); color: #9df0d0; }
+  .badge.ok { background: var(--ok-soft); border-color: rgba(146,178,92,.4); color: #d6e3bd; }
   .badge.ok::before { background: var(--ok); }
 
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
@@ -131,6 +168,14 @@
 
   /* ---------- layout ---------- */
 
+  /* Prompts and Run each get their own full-height column now (previously
+     stacked into one cramped 372px sidebar with internal scroll-zones) so
+     neither ever needs to scroll internally to reach its own buttons — see
+     docs/PROGRESS.md for why this replaced the old .split/.split.right
+     stacked-column structure. Side column (Progress+Activity) stays
+     narrower since neither needs much width. Images spans the full width
+     below, since a thumbnail grid is the one place more width is actually
+     useful. */
   main {
     flex: 1 1 auto;
     min-height: 0;
@@ -138,30 +183,42 @@
     display: grid;
     gap: 14px;
     grid-template-columns: 1fr;
-    grid-auto-rows: 1fr;
-    overflow: hidden;
+    grid-auto-rows: auto;
+    overflow-y: auto; /* last-resort safety net stacked at narrow widths */
+    overflow-x: hidden;
   }
-  @media (min-width: 1000px) {
-    main { grid-template-columns: 372px 1fr; grid-template-rows: 1fr; }
+  @media (min-width: 1100px) {
+    main {
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(260px, 300px);
+      /* Run's content height varies with mode (picking "Beat interval…"
+         adds two more fields) and must never need its own scroll to reach
+         Start/Stop in a normal window, so this row gets the bigger floor
+         and the larger share of extra space; Images already scrolls its
+         own thumbnail grid internally, so it can give up room first. */
+      grid-template-rows: minmax(430px, 1fr) minmax(180px, .5fr);
+      grid-template-areas:
+        "prompts run side"
+        "images  images images";
+      overflow: hidden;
+    }
+    .prompts-panel { grid-area: prompts; }
+    .run-panel { grid-area: run; }
+    .side-col { grid-area: side; }
+    .images-panel { grid-area: images; }
   }
 
-  /* Left column: Setup and Run size to content; Prompts absorbs the slack
-     but can never be squeezed below a usable editor height. */
-  .split {
-    display: grid;
+  .side-col {
+    display: flex;
+    flex-direction: column;
     gap: 14px;
     min-height: 0;
-    /* Without this a long unwrappable path inside a panel raises the whole
-       column's min-content width, and the column then overflows its grid
-       track and sits on top of the next column. */
     min-width: 0;
-    height: 100%;
-    overflow-y: auto; /* last-resort safety net for very short windows */
-    grid-template-rows: auto minmax(170px, 1fr) auto;
-    align-content: start;
   }
-  /* Right column: Progress compact, Images takes the room, Activity pinned. */
-  .split.right { grid-template-rows: auto minmax(0, 1fr) auto; }
+  /* Activity fills whatever room Progress doesn't need, instead of leaving
+     empty column beneath a short fixed-height log — see the .log override
+     below that lets it grow rather than stay pinned at 132px. */
+  .side-col .panel.flexible { flex: 1 1 auto; min-height: 120px; }
+  .side-col .panel.flexible .log { flex: 1 1 auto; min-height: 60px; height: auto; }
 
   .panel {
     background: var(--panel);
@@ -191,6 +248,14 @@
      behind a scrollbar is recoverable; content clipped away is not. */
   .panel.flexible { min-height: 0; overflow: hidden; }
 
+  /* Run's content is fixed-height controls, not a growable editor, and its
+     grid row now gives it generous headroom — so unlike .flexible panels it
+     scrolls as ONE whole unit (fields and buttons together) only as a last
+     resort on a genuinely short window, rather than splitting a scrollable
+     sub-region away from pinned buttons. That split read as needlessly
+     compact/busy once the panel had real room to breathe. */
+  .run-panel { min-height: 0; overflow-y: auto; overflow-x: hidden; }
+
   .panel h2 {
     font-size: 10.5px;
     text-transform: uppercase;
@@ -215,11 +280,13 @@
     font-weight: 600;
   }
 
-  /* Only the checklist scrolls inside Setup, never the action buttons. */
+  /* Setup is a modal now, not a cramped sidebar panel, so its checklist (6
+     items, ~280px) gets room to show in full instead of its own nested
+     scrollbar; only a truly short window falls back to scrolling it. */
   #setup-list {
-    max-height: 82px;
+    max-height: min(320px, 60vh);
     overflow-y: auto;
-    flex: 0 1 auto; /* may shrink on short windows; the buttons below never do */
+    flex: 0 1 auto;
     min-height: 34px;
     margin: -2px 0 0;
   }
@@ -317,19 +384,21 @@
   /* ---------- buttons ---------- */
 
   button {
-    background: var(--accent-btn);
-    color: #fff;
+    /* Amber fill with dark ink, not white-on-blue: the same pairing as a
+       tally light or a hazard label, not a generic SaaS primary button. */
+    background: var(--accent-fill);
+    color: var(--accent-ink);
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     padding: 8px 13px;
     font-size: 12.5px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
     font-family: inherit;
     white-space: nowrap;
     transition: background .12s ease, border-color .12s ease, opacity .12s ease;
   }
-  button:hover:not(:disabled) { background: var(--accent-btn-hover); }
+  button:hover:not(:disabled) { background: var(--accent-fill-hover); }
   button:active:not(:disabled) { transform: translateY(.5px); }
   button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
   button:disabled { opacity: .38; cursor: not-allowed; }
@@ -338,11 +407,12 @@
     background: var(--panel-2);
     border-color: var(--border);
     color: var(--text);
+    font-weight: 600;
   }
   button.secondary:hover:not(:disabled) { background: var(--panel-3); border-color: var(--border-strong); }
 
-  button.danger { background: var(--error); color: #2a0d0d; }
-  button.danger:hover:not(:disabled) { background: #ff8a8a; }
+  button.danger { background: var(--error); color: #250906; font-weight: 700; }
+  button.danger:hover:not(:disabled) { background: #e8806f; }
 
   button.ghost {
     background: transparent;
@@ -363,21 +433,28 @@
 
   /* ---------- progress ---------- */
 
+  /* Signature element: every number in this UI that reports a count, a
+     percentage, or a beat index reads as an instrument display — monospace,
+     tabular figures — not the body sans. Grounded in the subject: this tool
+     exists to keep 200-300 sequential frame numbers honest, so the numbers
+     themselves are the thing worth giving a distinct, deliberate identity. */
   .stats { display: flex; gap: 8px; margin-bottom: 12px; flex: none; }
   .stat {
     flex: 1;
     min-width: 0;
     background: var(--panel-2);
     border: 1px solid var(--border);
+    border-top: 2px solid var(--border-strong);
     border-radius: var(--radius-sm);
-    padding: 8px 10px;
+    padding: 7px 10px 8px;
   }
   .stat .n {
-    font-size: 19px;
+    font-family: var(--mono);
+    font-size: 18px;
     font-weight: 700;
     line-height: 1.15;
     font-variant-numeric: tabular-nums;
-    letter-spacing: -.5px;
+    letter-spacing: -.2px;
   }
   .stat .k {
     font-size: 9.5px;
@@ -387,8 +464,14 @@
     font-weight: 700;
     margin-top: 1px;
   }
-  .stat.ok .n { color: var(--ok); }
-  .stat.error .n { color: var(--error); }
+  /* Color is a state, not a label: a stat only takes its semantic color once
+     the count actually means something. "0 failed" and "0 done" are both
+     the same quiet neutral — a permanently red "failed" rail would put an
+     alarm on screen before anything has gone wrong. */
+  .stat.ok.has-value { border-top-color: var(--ok); }
+  .stat.ok.has-value .n { color: var(--ok); }
+  .stat.error.has-value { border-top-color: var(--error); }
+  .stat.error.has-value .n { color: var(--error); }
   .stat.pending .n { color: var(--muted); }
 
   .progress-wrap { flex: none; }
@@ -401,7 +484,7 @@
   }
   .progress > div {
     height: 100%;
-    background: linear-gradient(90deg, var(--accent), #8b5cf6);
+    background: linear-gradient(90deg, var(--accent), var(--accent-fill));
     width: 0%;
     transition: width .4s ease;
   }
@@ -424,7 +507,7 @@
     margin-top: 11px;
     font-size: 12.5px;
   }
-  .current .beat { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .current .beat { font-family: var(--mono); font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
   .current .txt { color: var(--muted); margin-top: 3px; font-size: 11.5px; }
 
   /* ---------- images ---------- */
@@ -440,7 +523,17 @@
     padding-right: 3px;
   }
 
+  /* A real <button> now (was a div with a click listener — untabbable,
+     unactivatable with Enter/Space). Reset everything the global button
+     rule would otherwise impose: full-width grid cell, no padding/centering/
+     bold text, and its own focus ring rather than the default outline. */
   .beat-card {
+    width: 100%;
+    padding: 0;
+    font: inherit;
+    font-weight: 400;
+    text-align: left;
+    color: inherit;
     background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -449,10 +542,15 @@
     flex-direction: column;
     transition: border-color .12s ease, transform .12s ease;
   }
+  .beat-card:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
   .beat-card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
   .beat-card .thumb {
     aspect-ratio: 16/9;
-    background: #0a0e14;
+    background: #100c07;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -462,7 +560,7 @@
   }
   .beat-card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .beat-card .meta { padding: 6px 8px; display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .beat-card .num { font-weight: 700; font-size: 11.5px; font-variant-numeric: tabular-nums; flex: none; }
+  .beat-card .num { font-family: var(--mono); font-weight: 700; font-size: 11.5px; font-variant-numeric: tabular-nums; flex: none; }
   .beat-card .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
   .beat-card .cap {
     font-size: 10.5px;
@@ -477,9 +575,9 @@
   .dot.pending { background: var(--pending); }
   .dot.missing_file { background: var(--warn); }
   .dot.stale { background: var(--warn); }
-  .beat-card.failed { border-color: rgba(248,113,113,.45); }
-  .beat-card.missing_file { border-color: rgba(251,191,36,.45); }
-  .beat-card.stale { border-color: rgba(251,191,36,.45); }
+  .beat-card.failed { border-color: rgba(221,99,83,.45); }
+  .beat-card.missing_file { border-color: rgba(217,116,58,.45); }
+  .beat-card.stale { border-color: rgba(217,116,58,.45); }
 
   .empty {
     color: var(--faint);
@@ -491,7 +589,7 @@
   /* ---------- activity log ---------- */
 
   .log {
-    background: #080b10;
+    background: #0f0b06;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 8px 10px;
@@ -503,7 +601,7 @@
     flex: none;
   }
   .log div { display: flex; gap: 8px; }
-  .log .t { color: #737f93; flex: none; } /* AA on the log's darker ground */
+  .log .t { color: #8f8168; flex: none; } /* AA on the log's darker ground */
   .log .info { color: var(--muted); }
   .log .ok { color: var(--ok); }
   .log .warn { color: var(--warn); }
@@ -520,9 +618,9 @@
     border: 1px solid;
   }
   .alert:last-child { margin-bottom: 0; }
-  .alert.error { background: var(--error-soft); border-color: rgba(248,113,113,.4); color: #ffc4c4; }
-  .alert.warn { background: var(--warn-soft); border-color: rgba(251,191,36,.4); color: #ffdf9e; }
-  .alert.ok { background: var(--ok-soft); border-color: rgba(52,211,153,.4); color: #9df0d0; }
+  .alert.error { background: var(--error-soft); border-color: rgba(221,99,83,.4); color: #f2c2ba; }
+  .alert.warn { background: var(--warn-soft); border-color: rgba(217,116,58,.4); color: #f4c8a1; }
+  .alert.ok { background: var(--ok-soft); border-color: rgba(146,178,92,.4); color: #d6e3bd; }
 
   /* Alert slots collapse completely when empty, so an idle panel has no
      mystery gap where a message would go. */
@@ -584,7 +682,7 @@
     text-transform: uppercase;
     color: var(--warn);
     background: var(--warn-soft);
-    border: 1px solid rgba(251,191,36,.35);
+    border: 1px solid rgba(217,116,58,.35);
     border-radius: 999px;
     padding: 2px 8px;
   }
@@ -626,79 +724,37 @@
     box-shadow: 0 24px 60px rgba(0,0,0,.5);
   }
   .sheet h2 {
-    font-size: 16px;
-    margin: 0 0 3px;
-    font-weight: 650;
+    font-family: var(--display);
+    font-size: 19px;
+    margin: 0 0 4px;
+    font-weight: 700;
     letter-spacing: -.2px;
     text-transform: none;
     color: var(--text);
   }
   .sheet .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 16px; }
 
-  .sheet-divider {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--faint);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: .8px;
-    font-weight: 700;
-    margin: 16px 0 11px;
-    flex: none;
-  }
-  .sheet-divider::before, .sheet-divider::after {
-    content: '';
-    height: 1px;
-    background: var(--border);
-    flex: 1;
-  }
+  #new-project-result:not(:empty) { margin-top: 9px; }
 
-  .session-list { overflow-y: auto; min-height: 0; margin: 0 -4px; padding: 0 4px; }
+  /* ---------- setup toast ---------- */
 
-  .session {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
-    text-align: left;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 10px 12px;
-    margin-bottom: 7px;
-    color: var(--text);
-    font-weight: 500;
-    font-size: 13px;
-    white-space: normal;
-  }
-  .session:hover { background: var(--panel-3); border-color: var(--border-strong); }
-  .session .s-name {
-    font-weight: 650;
-    font-family: var(--mono);
-    font-size: 12.5px;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .session .s-meta { color: var(--faint); font-size: 11px; margin-top: 2px; }
-  .session .s-left { flex: 1; min-width: 0; }
-  .session .s-pct {
-    flex: none;
-    font-variant-numeric: tabular-nums;
-    font-size: 11.5px;
-    font-weight: 700;
-    color: var(--muted);
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 3px 9px;
-  }
-  .session.complete .s-pct { color: #9df0d0; border-color: rgba(52,211,153,.4); background: var(--ok-soft); }
-  .session.broken .s-pct { color: #ffc4c4; border-color: rgba(248,113,113,.4); background: var(--error-soft); }
+  /* Lighter than .overlay's solid backdrop on purpose: this is a dismissible
+     toast the user checks in on, not a full takeover like the beat detail
+     modal, so the page stays visible (and legible) behind it. */
+  .overlay.toast-overlay { background: rgba(10, 8, 5, .6); }
+  .sheet.toast-sheet { max-width: 460px; }
 
-  #session-msg:not(:empty) { margin-top: 10px; }
+  #setup-btn { position: relative; }
+  .setup-dot {
+    display: none;
+    position: absolute;
+    top: -3px; right: -3px;
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--error);
+    border: 2px solid var(--panel);
+  }
+  .setup-dot.warn { display: block; }
 
   /* ---------- beat detail modal ---------- */
 
@@ -711,8 +767,9 @@
     margin-bottom: 14px;
   }
   .detail-head .beat-tag {
+    font-family: var(--mono);
     font-size: 20px;
-    font-weight: 750;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
     letter-spacing: -.3px;
   }
@@ -733,7 +790,7 @@
   .detail-img {
     width: 100%;
     aspect-ratio: 16/9;
-    background: #0a0e14;
+    background: #100c07;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     display: flex;
@@ -782,7 +839,7 @@
     white-space: nowrap;
   }
   .chip:hover { border-color: var(--border-strong); color: var(--text); }
-  .chip.active { background: var(--accent-soft); border-color: rgba(91,140,255,.5); color: #c3d7ff; }
+  .chip.active { background: var(--accent-soft); border-color: rgba(222,162,62,.5); color: #f3d9a0; }
   .chip .chip-n { opacity: .75; margin-left: 4px; font-variant-numeric: tabular-nums; }
 
   /* ---------- save location + open-folder row ---------- */
@@ -805,35 +862,18 @@
 
   ::-webkit-scrollbar { width: 9px; height: 9px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #2a3444; border-radius: 999px; border: 2px solid var(--panel); }
-  ::-webkit-scrollbar-thumb:hover { background: #3a465a; }
-  .log::-webkit-scrollbar-thumb { border-color: #080b10; }
+  ::-webkit-scrollbar-thumb { background: #3a3122; border-radius: 999px; border: 2px solid var(--panel); }
+  ::-webkit-scrollbar-thumb:hover { background: #4d4230; }
+  .log::-webkit-scrollbar-thumb { border-color: #0f0b06; }
 </style>
 </head>
 <body>
-
-<div class="overlay" id="session-overlay">
-  <div class="sheet">
-    <h2>Start a session</h2>
-    <div class="sub">Each video gets its own Flow project and its own numbered
-      output folder, so two videos' beats can never collide.</div>
-
-    <div class="row">
-      <input type="text" id="sheet-name" placeholder="new video name…">
-      <button id="sheet-new-btn" style="flex:0 0 auto">Create new session</button>
-    </div>
-    <div id="session-msg"></div>
-
-    <div class="sheet-divider">or continue</div>
-    <div class="session-list" id="session-list"></div>
-  </div>
-</div>
 
 <div class="overlay" id="detail-overlay">
   <div class="sheet detail">
     <div class="detail-head">
       <span class="beat-tag" id="dt-tag">beat 000</span>
-      <button class="detail-close" id="detail-close-btn" title="Close">✕</button>
+      <button class="detail-close" id="detail-close-btn" title="Close" aria-label="Close">✕</button>
     </div>
     <div class="detail-body">
       <div class="detail-img" id="dt-img"></div>
@@ -857,104 +897,136 @@
   </div>
 </div>
 
+<div class="overlay toast-overlay" id="setup-overlay">
+  <div class="sheet toast-sheet" id="setup-panel">
+    <div class="detail-head">
+      <h2 style="margin:0">Setup</h2>
+      <button class="detail-close" id="setup-close-btn" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div id="setup-list"></div>
+    <div class="row" style="margin-top:11px">
+      <button id="check-btn" class="secondary">Check again</button>
+      <button id="login-btn" class="secondary">Sign in</button>
+      <button id="project-btn" class="secondary" title="List and pick an existing Flow project">Choose</button>
+    </div>
+    <div id="project-picker" style="display:none; margin-top:9px"></div>
+
+    <div class="row" style="margin-top:9px">
+      <input type="text" id="new-project-name" placeholder="new video name…" aria-label="New video name">
+      <button id="new-project-btn" class="secondary" style="flex:0 0 auto"
+              title="Create a fresh, empty Flow project and matching prompts/output files">New project</button>
+    </div>
+    <div id="new-project-result"></div>
+  </div>
+</div>
+
+<div class="overlay toast-overlay" id="confirm-overlay">
+  <div class="sheet toast-sheet" style="max-width:400px">
+    <div class="detail-head">
+      <h2 style="margin:0">Confirm</h2>
+      <button class="detail-close" id="confirm-close-btn" title="Cancel" aria-label="Cancel">✕</button>
+    </div>
+    <p id="confirm-message" style="margin:0 0 16px; color:var(--text); font-size:13px; line-height:1.5"></p>
+    <div class="row">
+      <button class="secondary" id="confirm-cancel-btn">Cancel</button>
+      <button class="danger" id="confirm-ok-btn">Continue</button>
+    </div>
+  </div>
+</div>
+
 <header>
   <div class="brand">
     <span class="glyph">F</span>
     <h1>Flow Image Automation</h1>
   </div>
   <span id="status-badge" class="badge">idle</span>
-  <span id="session-badge" class="badge" style="display:none"></span>
-  <button id="switch-btn" class="secondary" style="padding:5px 11px;font-size:11.5px"
-          title="Pick a different session, or start a new one">Change session</button>
+  <button id="setup-btn" class="secondary" style="padding:5px 11px; font-size:11.5px">
+    Setup<span id="setup-dot" class="setup-dot"></span>
+  </button>
   <span id="paths-badge" class="badge"></span>
 </header>
 
 <main>
 
-  <div class="split">
+  <section class="panel flexible prompts-panel">
+    <h2>
+      Prompts
+      <span id="dirty-flag" class="dirty-flag">unsaved</span>
+    </h2>
+    <div id="prompt-alert"></div>
+    <div id="save-feedback"></div>
+    <textarea id="prompts" spellcheck="false" placeholder="BEAT 1&#10;&quot;narration line — reference only, never sent to Flow&quot;&#10;&#10;The actual image prompt for this beat...&#10;&#10;BEAT 2&#10;&quot;next narration&quot;&#10;&#10;The next image prompt..."></textarea>
+    <div class="row" style="margin-top:8px">
+      <button id="upload-btn" class="secondary">Upload</button>
+      <input type="file" id="upload-input" accept=".txt,text/plain" style="display:none">
+      <button id="save-btn" class="secondary">Save</button>
+      <button id="reload-btn" class="ghost">Reload</button>
+    </div>
+  </section>
 
-    <section class="panel" id="setup-panel">
-      <h2>Setup</h2>
-      <div id="setup-list"></div>
-      <div class="row" style="margin-top:11px">
-        <button id="check-btn" class="secondary">Check again</button>
-        <button id="login-btn" class="secondary">Sign in</button>
-        <button id="project-btn" class="secondary" title="List and pick an existing Flow project">Choose</button>
+  <section class="panel run-panel">
+    <h2>Run</h2>
+
+    <label for="prompts-file">Prompts file</label>
+    <div class="path-row">
+      <input type="text" id="prompts-file" spellcheck="false"
+             placeholder="type a path, or Browse…">
+      <button id="browse-prompts" class="secondary" title="Pick a prompts file on this computer">Browse…</button>
+    </div>
+
+    <label for="output-dir" style="margin-top:8px">Output folder</label>
+    <div class="path-row">
+      <input type="text" id="output-dir" spellcheck="false"
+             placeholder="type a path, or Browse…">
+      <button id="browse-output" class="secondary" title="Pick where images are saved on this computer">Browse…</button>
+    </div>
+
+    <div class="save-to-row">
+      <div class="save-to" id="save-to"></div>
+      <button id="open-folder-btn" class="ghost" title="Reveal this folder on your computer">Open folder</button>
+    </div>
+
+    <div class="row" style="margin-top:9px">
+      <div class="field">
+        <label for="mode">What to run</label>
+        <select id="mode">
+          <option value="resume">Remaining beats (resume)</option>
+          <option value="retry_failed">Only failed beats</option>
+          <option value="only">Beat interval…</option>
+          <option value="no_resume">Everything (re-generates all)</option>
+        </select>
       </div>
-      <div id="project-picker" style="display:none; margin-top:9px"></div>
-    </section>
-
-    <section class="panel flexible">
-      <h2>
-        Prompts
-        <span id="dirty-flag" class="dirty-flag">unsaved</span>
-      </h2>
-      <div id="prompt-alert"></div>
-      <div id="save-feedback"></div>
-      <textarea id="prompts" spellcheck="false" placeholder="BEAT 1&#10;&quot;narration line — reference only, never sent to Flow&quot;&#10;&#10;The actual image prompt for this beat...&#10;&#10;BEAT 2&#10;&quot;next narration&quot;&#10;&#10;The next image prompt..."></textarea>
-      <div class="row" style="margin-top:8px">
-        <button id="upload-btn" class="secondary">Upload</button>
-        <input type="file" id="upload-input" accept=".txt,text/plain" style="display:none">
-        <button id="save-btn" class="secondary">Save</button>
-        <button id="reload-btn" class="ghost">Reload</button>
+      <div class="field" style="max-width:96px">
+        <label for="limit">Limit</label>
+        <input type="number" id="limit" min="1" placeholder="all">
       </div>
-    </section>
+    </div>
 
-    <section class="panel">
-      <h2>Run</h2>
-
-      <label for="prompts-file">Prompts file</label>
-      <div class="path-row">
-        <input type="text" id="prompts-file" spellcheck="false"
-               placeholder="type a path, or Browse…">
-        <button id="browse-prompts" class="secondary" title="Pick a prompts file on this computer">Browse…</button>
-      </div>
-
-      <label for="output-dir" style="margin-top:8px">Output folder</label>
-      <div class="path-row">
-        <input type="text" id="output-dir" spellcheck="false"
-               placeholder="type a path, or Browse…">
-        <button id="browse-output" class="secondary" title="Pick where images are saved on this computer">Browse…</button>
-      </div>
-
-      <div class="save-to-row">
-        <div class="save-to" id="save-to"></div>
-        <button id="open-folder-btn" class="ghost" title="Reveal this folder on your computer">Open folder</button>
-      </div>
-
-      <div class="row" style="margin-top:9px">
+    <div id="only-wrap" style="display:none; margin-top:9px">
+      <div class="row">
         <div class="field">
-          <label for="mode">What to run</label>
-          <select id="mode">
-            <option value="resume">Remaining beats (resume)</option>
-            <option value="retry_failed">Only failed beats</option>
-            <option value="only">Specific beats…</option>
-            <option value="no_resume">Everything (re-generates all)</option>
-          </select>
+          <label for="only-from">From beat</label>
+          <input type="number" id="only-from" min="1" placeholder="e.g. 40" inputmode="numeric">
         </div>
-        <div class="field" style="max-width:96px">
-          <label for="limit">Limit</label>
-          <input type="number" id="limit" min="1" placeholder="all">
+        <div class="field">
+          <label for="only-to">To beat</label>
+          <input type="number" id="only-to" min="1" placeholder="e.g. 45" inputmode="numeric">
         </div>
       </div>
+      <label for="only" style="margin-top:8px">Or specific beats (comma list)</label>
+      <input type="text" id="only" placeholder="5,12,40-45" spellcheck="false">
+    </div>
 
-      <div id="only-wrap" style="display:none; margin-top:9px">
-        <label for="only">Which beats</label>
-        <input type="text" id="only" placeholder="5,12,40-45" spellcheck="false">
-      </div>
+    <div id="run-estimate"></div>
 
-      <div id="run-estimate"></div>
+    <div class="row" style="margin-top:11px">
+      <button id="dry-btn" class="secondary">Dry run</button>
+      <button id="start-btn">Start</button>
+      <button id="stop-btn" class="danger" disabled>Stop</button>
+    </div>
+  </section>
 
-      <div class="row" style="margin-top:11px">
-        <button id="dry-btn" class="secondary">Dry run</button>
-        <button id="start-btn">Start</button>
-        <button id="stop-btn" class="danger" disabled>Stop</button>
-      </div>
-    </section>
-
-  </div>
-
-  <div class="split right">
+  <div class="side-col">
 
     <section class="panel">
       <h2>Progress</h2>
@@ -979,26 +1051,26 @@
     </section>
 
     <section class="panel flexible">
-      <h2>Images <span class="count" id="images-count">0</span></h2>
-      <div id="gaps-alert"></div>
-      <div class="img-toolbar">
-        <input type="text" id="beat-search" placeholder="Search narration or prompt…">
-        <div class="chip-group" id="status-filter">
-          <button class="chip active" data-filter="all">All</button>
-          <button class="chip" data-filter="success">Done</button>
-          <button class="chip" data-filter="outstanding">Outstanding</button>
-          <button class="chip" data-filter="failed">Failed</button>
-        </div>
-      </div>
-      <div class="beats" id="beats"></div>
-    </section>
-
-    <section class="panel">
       <h2>Activity</h2>
       <div class="log" id="log"></div>
     </section>
 
   </div>
+
+  <section class="panel flexible images-panel">
+    <h2>Images <span class="count" id="images-count">0</span></h2>
+    <div id="gaps-alert"></div>
+    <div class="img-toolbar">
+      <input type="text" id="beat-search" placeholder="Search narration or prompt…" aria-label="Search beats">
+      <div class="chip-group" id="status-filter">
+        <button class="chip active" data-filter="all">All</button>
+        <button class="chip" data-filter="success">Done</button>
+        <button class="chip" data-filter="outstanding">Outstanding</button>
+        <button class="chip" data-filter="failed">Failed</button>
+      </div>
+    </div>
+    <div class="beats" id="beats"></div>
+  </section>
 
 </main>
 
@@ -1020,6 +1092,15 @@ let beatSearch = '';
 // per run, only for a run this page actually watched happen (never on load,
 // so opening the page never announces a run that finished hours ago).
 let wasRunning = false;
+
+// Which "New project" outcome is currently shown in #new-project-result, so
+// polling doesn't re-render (and, for the timeout case, re-fetch the project
+// list) on every single tick once it's already displayed. Keyed off
+// STATE.finished_at, which changes exactly when a genuinely new outcome
+// exists server-side — this is what makes the recovery UI work correctly
+// even when the page reloads mid-wait: it's driven by polled server state,
+// not a client-side timer that a reload destroys.
+let shownNewProjectResult = null;
 
 function hex(str) {
   return Array.from(new TextEncoder().encode(str))
@@ -1075,15 +1156,14 @@ function setDirty(value) {
   $('dirty-flag').classList.toggle('on', value);
 }
 
-// Paths are stored so the rest of the page has one source of truth for the
-// chosen session, but they are deliberately NOT restored on load: every open
-// starts at the session chooser (or reattaches to a live run) rather than
-// silently resuming whichever video happened to be open last.
-const STORE = 'flow-automation-paths';
-
-function savePaths() {
-  try { localStorage.setItem(STORE, JSON.stringify(currentPaths())); } catch (e) {}
-}
+// Deliberately no client-side persistence of prompts-file/output-dir at
+// all — no localStorage, nothing. Confirmed live: even framed as "just
+// remembering a path, not a session," a reload during an unrelated
+// in-progress action (New project) still surfaced a completely different
+// video's 97 beats, which is exactly the "previous session's data after a
+// refresh" this must never do. Every reload starts genuinely blank; typing
+// a path, Browsing, or Uploading are the only ways content appears.
+function savePaths() {}
 
 async function refresh() {
   const p = currentPaths();
@@ -1098,8 +1178,16 @@ async function refresh() {
   render(data);
 }
 
+let setupOpRunning = false;
+let lastRun = null;
+
 function render(data) {
   const run = data.run;
+  lastRun = run;
+  const wasSetupOpRunning = setupOpRunning;
+  setupOpRunning = run.running && (run.kind === 'login' || run.kind === 'new_project');
+  if (wasSetupOpRunning && !setupOpRunning && $('setup-overlay').classList.contains('on'))
+    armSetupDismiss();
 
   // header
   const badge = $('status-badge');
@@ -1112,15 +1200,6 @@ function render(data) {
   }
   $('paths-badge').textContent = data.output_dir;
   $('paths-badge').title = data.output_dir;
-
-  // Name the active session right next to the control that changes it, so
-  // "which video am I looking at" and "how do I switch" sit together.
-  const slug = (data.output_dir || '').split(/[\\/]/).filter(Boolean).pop();
-  if (slug) {
-    $('session-badge').textContent = slug;
-    $('session-badge').title = 'Current session';
-    $('session-badge').style.display = '';
-  }
 
   // State plainly where images land, and whether that folder exists yet —
   // a typo in the box otherwise looks identical to a correct path right up
@@ -1139,13 +1218,20 @@ function render(data) {
 
   // counts
   const c = data.counts || {};
-  $('c-success').textContent = c.success || 0;
-  $('c-failed').textContent = c.failed || 0;
+  const successN = c.success || 0;
+  const failedN = c.failed || 0;
+  $('c-success').textContent = successN;
+  $('c-failed').textContent = failedN;
   // "stale" beats hold an image generated from older prompt text; the run
   // will regenerate them, so they are outstanding work, not done work.
   $('c-pending').textContent =
     (c.pending || 0) + (c.missing_file || 0) + (c.stale || 0);
   $('c-total').textContent = data.beats.length;
+  // A stat card only carries its semantic color once it's actually true —
+  // "0 failed" showing the same alarm-red rail as "12 failed" would mean
+  // every session opens already looking like something's wrong.
+  $('c-success').closest('.stat').classList.toggle('has-value', successN > 0);
+  $('c-failed').closest('.stat').classList.toggle('has-value', failedN > 0);
   $('images-count').textContent = data.beats.length;
 
   // How long the rest will probably take, from this session's own history —
@@ -1197,15 +1283,27 @@ function render(data) {
     cw.innerHTML = '';
   }
 
-  // alerts
+  // alerts — a New-Session timeout is handled below with its own recovery
+  // UI, which explains it better than a raw RuntimeError dumped here would.
+  const isNewProjectOutcome = run.result && run.result.new_session;
   let alert = '';
-  if (run.error) alert += `<div class="alert error">${escapeHtml(run.error)}</div>`;
+  if (run.error && !isNewProjectOutcome)
+    alert += `<div class="alert error">${escapeHtml(run.error)}</div>`;
   if (run.result && run.result.aborted_reason)
     alert += `<div class="alert warn">${escapeHtml(run.result.aborted_reason)}</div>`;
   $('run-alert').innerHTML = alert;
 
-  $('prompt-alert').innerHTML = data.prompts_error
-    ? `<div class="alert error">${escapeHtml(data.prompts_error)}</div>` : '';
+  renderNewProjectState(run);
+
+  // A brand-new session's prompts file genuinely doesn't exist until the
+  // first Save — that's expected, not a problem, and a red FileNotFoundError
+  // for completely normal "you haven't written anything yet" state reads as
+  // something being broken. Any other parse error is a real problem and
+  // stays a loud red alert.
+  $('prompt-alert').innerHTML = !data.prompts_error ? ''
+    : data.prompts_error.startsWith('FileNotFoundError')
+      ? `<div class="hint">New file — write your beats below, then Save.</div>`
+      : `<div class="alert error">${escapeHtml(data.prompts_error)}</div>`;
 
   $('gaps-alert').innerHTML = (data.gaps && data.gaps.length)
     ? `<div class="alert warn">Beat numbers missing from the file: ${compressRanges(data.gaps)}
@@ -1250,15 +1348,19 @@ function beatCardHtml(b) {
     ? `<img loading="lazy" src="/img/${lastToken}/${encodeURIComponent(b.file)}" alt="beat ${n}">`
     : (STATUS_LABEL[b.status] || 'not generated');
   const cap = b.narration || b.prompt.slice(0, 60);
-  return `<div class="beat-card ${b.status}" data-index="${b.index}"
+  // A real <button>, not a div with a click listener: opening a beat's
+  // detail is a primary action on this page, and a plain div is invisible
+  // to keyboard navigation — untabbable, unactivatable with Enter/Space.
+  return `<button type="button" class="beat-card ${b.status}" data-index="${b.index}"
+             aria-label="Beat ${n}: ${escapeHtml(cap)}"
              title="${escapeHtml(b.error || cap)}">
-    <div class="thumb">${thumb}</div>
-    <div class="meta">
+    <span class="thumb">${thumb}</span>
+    <span class="meta">
       <span class="dot ${b.status}"></span>
       <span class="num">${n}</span>
       <span class="cap">${escapeHtml(cap)}</span>
-    </div>
-  </div>`;
+    </span>
+  </button>`;
 }
 
 function matchesFilter(b) {
@@ -1359,11 +1461,47 @@ function escapeHtml(s) {
     .replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 }
 
+// A native confirm() blocks the whole tab silently and with no styling of
+// its own — easy to miss entirely (especially if the mouse or attention is
+// elsewhere), and when missed it *looks* exactly like "nothing happened,"
+// which is exactly what got reported as the page being unresponsive. This
+// renders the same question in-page instead, impossible to have appear
+// off-screen or go unnoticed the way an OS-level dialog can.
+let confirmResolve = null;
+
+function confirmDialog(message) {
+  $('confirm-message').textContent = message;
+  $('confirm-overlay').classList.add('on');
+  return new Promise(resolve => { confirmResolve = resolve; });
+}
+
+function settleConfirm(result) {
+  $('confirm-overlay').classList.remove('on');
+  if (confirmResolve) { confirmResolve(result); confirmResolve = null; }
+}
+
+$('confirm-ok-btn').addEventListener('click', () => settleConfirm(true));
+$('confirm-cancel-btn').addEventListener('click', () => settleConfirm(false));
+$('confirm-close-btn').addEventListener('click', () => settleConfirm(false));
+$('confirm-overlay').addEventListener('click', (ev) => {
+  if (ev.target.id === 'confirm-overlay') settleConfirm(false);
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && $('confirm-overlay').classList.contains('on'))
+    settleConfirm(false);
+});
+
 // -- setup ------------------------------------------------------------
 
 const MARK = {ok: '✓', fail: '✗', warn: '!', unknown: '?'};
 
 async function refreshSetup() {
+  // Disabled for the round-trip, not just after clicking: without this a
+  // slow check (Chrome not running yet, a stalled network) gave zero
+  // feedback that anything was happening, and a second click mid-request
+  // could fire a redundant overlapping call.
+  const btn = $('check-btn');
+  btn.disabled = true;
   try {
     const p = currentPaths();
     const data = await api('/api/setup?' + new URLSearchParams(
@@ -1381,14 +1519,56 @@ async function refreshSetup() {
       </div>`).join('');
 
     const panel = $('setup-panel');
-    panel.style.borderColor = data.ready ? 'var(--border)' : 'rgba(248,113,113,.5)';
+    panel.style.borderColor = data.ready ? 'var(--border)' : 'rgba(221,99,83,.5)';
+    $('setup-dot').classList.toggle('warn', !data.ready);
   } catch (e) {
     $('setup-list').innerHTML =
       `<div class="alert error">${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
   }
 }
 
 $('check-btn').addEventListener('click', refreshSetup);
+
+// Setup now lives behind a header button instead of a permanent panel, as a
+// toast that opens over the page, auto-dismisses after a few seconds, and
+// pauses that timer on hover so it never vanishes mid-read or mid-click.
+let setupDismissTimer = null;
+let setupHovering = false;
+
+function armSetupDismiss() {
+  clearTimeout(setupDismissTimer);
+  // Never auto-close while sign-in or new-project creation is actively
+  // running (progress/results only show here) or while the mouse is
+  // already resting over it (a poll-driven re-arm, unlike a mouseleave,
+  // fires with no new hover event to cancel it).
+  if (setupOpRunning || setupHovering) return;
+  setupDismissTimer = setTimeout(closeSetupToast, 6000);
+}
+
+function openSetupToast() {
+  $('setup-overlay').classList.add('on');
+  refreshSetup();
+  armSetupDismiss();
+}
+
+function closeSetupToast() {
+  clearTimeout(setupDismissTimer);
+  $('setup-overlay').classList.remove('on');
+}
+
+$('setup-btn').addEventListener('click', openSetupToast);
+$('setup-close-btn').addEventListener('click', closeSetupToast);
+$('setup-overlay').addEventListener('click', (ev) => {
+  if (ev.target.id === 'setup-overlay') closeSetupToast();
+});
+$('setup-overlay').addEventListener('mouseenter', () => { setupHovering = true; clearTimeout(setupDismissTimer); });
+$('setup-overlay').addEventListener('mouseleave', () => { setupHovering = false; armSetupDismiss(); });
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && $('setup-overlay').classList.contains('on'))
+    closeSetupToast();
+});
 
 $('login-btn').addEventListener('click', async () => {
   try {
@@ -1403,8 +1583,10 @@ $('login-btn').addEventListener('click', async () => {
   }
 });
 
-$('project-btn').addEventListener('click', async () => {
-  const box = $('project-picker');
+/* Shared by the Setup panel's own Choose button and the new-session timeout
+   recovery below, so there is exactly one implementation of "list projects,
+   let the user pick one, save it" rather than two that could drift apart. */
+async function renderProjectPicker(box, {onPicked} = {}) {
   box.style.display = 'block';
   box.innerHTML = '<div class="hint">Looking for projects…</div>';
   try {
@@ -1427,6 +1609,7 @@ $('project-btn').addEventListener('click', async () => {
           });
           box.innerHTML = '<div class="alert ok">Saved to .env.</div>';
           refreshSetup();
+          if (onPicked) await onPicked(btn.dataset.url);
         } catch (e) {
           box.innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
         }
@@ -1435,13 +1618,39 @@ $('project-btn').addEventListener('click', async () => {
   } catch (e) {
     box.innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
   }
-});
+}
+
+$('project-btn').addEventListener('click', () => renderProjectPicker($('project-picker')));
 
 // -- prompts ----------------------------------------------------------
 
 $('mode').addEventListener('change', () => {
   $('only-wrap').style.display = $('mode').value === 'only' ? 'block' : 'none';
 });
+
+/* From/To beat interval composes into the same #only field the server
+   already parses ("N-M") — a friendlier front end for exactly the range
+   syntax that already existed, not a new selection mechanism. Left open on
+   either side, it fills in from the beats actually loaded right now: "From
+   40" alone means 40 through the last beat; "To 45" alone means the first
+   beat through 45. The raw text field below stays available and untouched
+   for a non-contiguous list ("5,12,40-45") that an interval can't express. */
+function composeInterval() {
+  const fromRaw = $('only-from').value.trim();
+  const toRaw = $('only-to').value.trim();
+  if (!fromRaw && !toRaw) return;
+
+  const indices = lastBeats.map(b => b.index);
+  const lo = indices.length ? Math.min(...indices) : 1;
+  const hi = indices.length ? Math.max(...indices) : 1;
+
+  const from = fromRaw || String(lo);
+  const to = toRaw || String(hi);
+  $('only').value = from === to ? from : `${from}-${to}`;
+}
+
+$('only-from').addEventListener('input', composeInterval);
+$('only-to').addEventListener('input', composeInterval);
 
 $('prompts').addEventListener('input', () => setDirty(true));
 
@@ -1458,6 +1667,12 @@ async function savePrompts() {
     return false;
   }
 
+  // Disabled for the round-trip: a slow disk write plus a second Save click
+  // (or Start, which also calls this) could otherwise fire two overlapping
+  // writes to the same file. Also called from start()'s pre-save step, so
+  // this guards that path too, not just a direct click.
+  const btn = $('save-btn');
+  btn.disabled = true;
   try {
     const res = await api('/api/prompts', {
       method: 'POST',
@@ -1481,18 +1696,20 @@ async function savePrompts() {
   } catch (e) {
     $('save-feedback').innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
     return false;
+  } finally {
+    btn.disabled = false;
   }
 }
 
 $('save-btn').addEventListener('click', savePrompts);
 
 $('reload-btn').addEventListener('click', async () => {
-  if (promptsDirty && !confirm('Discard unsaved changes to the prompts?')) return;
+  if (promptsDirty && !(await confirmDialog('Discard unsaved changes to the prompts?'))) return;
   await fetchPromptsText();
 });
 
-$('upload-btn').addEventListener('click', () => {
-  if (promptsDirty && !confirm('Discard unsaved changes to the prompts?')) return;
+$('upload-btn').addEventListener('click', async () => {
+  if (promptsDirty && !(await confirmDialog('Discard unsaved changes to the prompts?'))) return;
   $('upload-input').click();
 });
 
@@ -1526,6 +1743,7 @@ async function fetchPromptsText() {
   // user's back, and would lose anything the parser skips (comments,
   // spacing, an unparseable section being edited).
   const p = currentPaths();
+  if (!p.prompts_file) { $('prompts').value = ''; setDirty(false); return; }
   try {
     const data = await api('/api/prompts?' + new URLSearchParams(
       {prompts_file: p.prompts_file}).toString());
@@ -1580,6 +1798,18 @@ function notifyRunFinished(run) {
 }
 
 async function start(dry, overrides) {
+  // Checked before anything else — the server refuses to save or start
+  // with either path blank, but catching it here gives the specific,
+  // actionable reason immediately instead of a generic "could not save"
+  // message from a wasted round-trip (e.g. uploading a file before ever
+  // choosing a prompts-file path used to hit exactly this, silently).
+  const initialPaths = currentPaths();
+  if (!initialPaths.prompts_file || !initialPaths.output_dir) {
+    $('run-alert').innerHTML =
+      `<div class="alert error">Set both a prompts file and an output folder before starting.</div>`;
+    return;
+  }
+
   // A run reads the prompts FILE, not this editor. Persist any pending edits
   // first, or an upload/typo-fix the user is looking at gets silently ignored
   // and the previous file's prompts are generated instead.
@@ -1606,7 +1836,7 @@ async function start(dry, overrides) {
   const body = {...p, mode, only, limit, dry_run: !!dry};
 
   if (!dry && mode === 'no_resume') {
-    if (!confirm('This regenerates EVERY beat, including ones already done, and spends credits on all of them. Continue?')) return;
+    if (!(await confirmDialog('This regenerates EVERY beat, including ones already done, and spends credits on all of them. Continue?'))) return;
   }
 
   requestNotifyPermission();
@@ -1694,102 +1924,113 @@ $('open-folder-btn').addEventListener('click', async () => {
   }
 });
 
-// -- session chooser --------------------------------------------------
+// -- new project (inline, no chooser gate) -----------------------------
 
-function openSessionSheet() {
-  $('session-overlay').classList.add('on');
-  $('session-msg').innerHTML = '';
-  loadSessions();
-}
+/* Driven by polled server state, not a client-side timer — called on every
+   render(), whether this page's own click started the operation or it's
+   simply reloading onto one already in progress on the server. That's what
+   makes the recovery UI survive a reload: a native alert() or a JS
+   setInterval closure both die with the page; STATE.result does not.
+   shownNewProjectResult stops this from re-rendering (and, for the timeout
+   case, re-fetching the project list — an actual live Chrome/Playwright
+   call) on every single poll tick once an outcome is already displayed. */
+function renderNewProjectState(run) {
+  const box = $('new-project-result');
+  const r = run.result;
 
-function closeSessionSheet() {
-  $('session-overlay').classList.remove('on');
-}
+  if (run.running && run.kind === 'new_project') {
+    const s = run.started_at ? Math.round(Date.now() / 1000 - run.started_at) : 0;
+    box.innerHTML = `<div class="alert warn">Creating a new Flow project —
+      ${s}s elapsed. This can take anywhere from a few seconds to over two
+      minutes.
+      <button id="cancel-new-project" class="ghost" style="margin-top:6px">Stop waiting</button></div>`;
+    $('cancel-new-project').addEventListener('click', async () => {
+      try { await api('/api/setup/cancel-new-session', {method: 'POST'}); }
+      catch (e) { /* already finished on its own — nothing to do */ }
+    });
+    shownNewProjectResult = null; // still in progress; re-show once it resolves
+    return;
+  }
 
-async function loadSessions() {
-  const box = $('session-list');
-  box.innerHTML = '<div class="hint">Looking for previous sessions…</div>';
-  try {
-    const data = await api('/api/sessions');
-    if (!data.sessions.length) {
-      box.innerHTML = '<div class="hint">No previous sessions yet.</div>';
-      return;
-    }
-    box.innerHTML = data.sessions.map(s => {
-      const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
-      const cls = s.error ? 'broken' : (s.total && s.done >= s.total ? 'complete' : '');
-      const meta = s.error
-        ? escapeHtml(s.error)
-        : `${s.done} of ${s.total} beat(s) generated`;
-      return `<button class="session ${cls}" data-p="${escapeHtml(s.prompts_file)}"
-                 data-o="${escapeHtml(s.output_dir)}">
-        <span class="s-left">
-          <span class="s-name">${escapeHtml(s.slug)}</span>
-          <div class="s-meta">${meta}</div>
-        </span>
-        <span class="s-pct">${s.error ? '!' : pct + '%'}</span>
-      </button>`;
-    }).join('');
-    box.querySelectorAll('.session').forEach(btn =>
-      btn.addEventListener('click', () =>
-        useSession(btn.dataset.p, btn.dataset.o))
-    );
-  } catch (e) {
-    box.innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
+  if (!r || !r.new_session) return;
+
+  const resultKey = run.finished_at + ':' + (r.project_url || '');
+  if (shownNewProjectResult === resultKey) return;
+  shownNewProjectResult = resultKey;
+
+  if (r.project_url) {
+    box.innerHTML = `<div class="alert ok">New project "${escapeHtml(r.slug)}"
+      is ready. <button id="use-new-project" class="secondary" style="margin-top:6px">Use it</button></div>`;
+    $('use-new-project').addEventListener('click', () => applyPaths(r.prompts_file, r.output_dir));
+  } else if (r.cancelled) {
+    box.innerHTML = `<div class="alert warn">Stopped waiting for Flow. Local
+      files for "${escapeHtml(r.slug)}" are ready — Flow may still finish
+      creating the project on its own; pick it up below if it shows up.</div>
+      <div id="new-project-picker" style="margin-top:8px"></div>`;
+    renderProjectPicker($('new-project-picker'), {
+      onPicked: async () => { await applyPaths(r.prompts_file, r.output_dir); }
+    });
+  } else {
+    // Local files are ready immediately either way. The Flow project itself
+    // may still be confirmable — a native alert() here (the previous
+    // version) is trivial to dismiss without reading and leaves no visible
+    // next step, and dies entirely if the page reloads while it's showing.
+    // The picker goes right here instead: same list Choose uses, one click
+    // away, and it persists across reloads because it's rendered from
+    // STATE every poll, not created once in a closure.
+    box.innerHTML = `<div class="alert warn">Local files for
+      "${escapeHtml(r.slug)}" are ready, but the new Flow project didn't
+      confirm in time. It may still finish — pick it from the list below
+      once it appears (usually within a minute or two).</div>
+      <div id="new-project-picker" style="margin-top:8px"></div>`;
+    renderProjectPicker($('new-project-picker'), {
+      onPicked: async () => { await applyPaths(r.prompts_file, r.output_dir); }
+    });
   }
 }
 
-/* Point the whole page at one session and load it. Everything downstream
-   (prompts text, beats, setup checks) is derived from these two paths, so
-   this is the single place a session becomes "the current one". */
-async function useSession(promptsFile, outputDir) {
+/* Point the whole page at a different prompts/output pair. Everything
+   downstream (prompts text, beats, setup checks) is derived from these two
+   paths. Used after creating a new project, and available generally since
+   typing/Browsing new paths directly already changes them the same way —
+   this just does it programmatically. */
+async function applyPaths(promptsFile, outputDir) {
+  // Same guard Reload and Upload already use — this overwrites the editor
+  // with a different file's contents exactly like those do, so it needs the
+  // same protection against silently discarding unsaved work.
+  if (promptsDirty && !(await confirmDialog('Discard unsaved changes to the prompts?'))) return;
   $('prompts-file').value = promptsFile;
   $('output-dir').value = outputDir;
   savePaths();
-  closeSessionSheet();
   await fetchPromptsText();
   await refresh();
   await refreshSetup();
 }
 
-$('switch-btn').addEventListener('click', openSessionSheet);
-
-$('sheet-new-btn').addEventListener('click', async () => {
-  const box = $('session-msg');
-  const name = $('sheet-name').value.trim();
+$('new-project-btn').addEventListener('click', async () => {
+  const box = $('new-project-result');
+  const name = $('new-project-name').value.trim();
   if (!name) {
     box.innerHTML = '<div class="alert warn">Give the video a name first.</div>';
     return;
   }
-  box.innerHTML = `<div class="alert warn">Creating a new Flow project — this can
-    take anywhere from a few seconds to over two minutes. Please wait rather
-    than clicking again.</div>`;
   try {
     await api('/api/setup/new-session', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name})
     });
-    const wait = setInterval(async () => {
-      const state = await api('/api/state?' + new URLSearchParams(currentPaths()).toString());
-      if (state.run.running) return;
-      clearInterval(wait);
-      const r = state.run.result;
-      if (r && r.new_session) {
-        $('sheet-name').value = '';
-        // Even when Flow's own confirmation times out, the local paths are
-        // valid immediately — adopt the session rather than making the user
-        // redo the naming, and say so if the project half is unconfirmed.
-        if (!r.project_url) {
-          alert('Local files for "' + r.slug + '" are ready, but the new Flow '
-            + 'project did not confirm in time. Wait a minute, then use '
-            + 'Choose in the Setup panel to attach it.');
-        }
-        await useSession(r.prompts_file, r.output_dir);
-      } else if (state.run.error) {
-        box.innerHTML = `<div class="alert error">${escapeHtml(state.run.error)}</div>`;
-      }
-    }, 1500);
+    $('new-project-name').value = '';
+    shownNewProjectResult = null;
+    // Flow's own project-creation click has genuinely unpredictable latency
+    // -- seconds on one attempt, well over a minute on the next, on the same
+    // account. renderNewProjectState (called every poll, see render()) picks
+    // up progress and the eventual outcome from here; faster polling just
+    // makes that feel responsive rather than laggy while it's active.
+    lastLogCount = -1;
+    if (polling) clearInterval(polling);
+    polling = setInterval(refresh, 1500);
+    refresh();
   } catch (e) {
     box.innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
   }
@@ -1806,9 +2047,9 @@ $('sheet-new-btn').addEventListener('click', async () => {
 );
 
 (async function init() {
-  // A run in progress owns the page. Reattaching matters most for the long
-  // unattended batches this tool exists for: an accidental refresh three
-  // hours into a 300-image run must not hide it behind a chooser.
+  // A batch run in progress owns the page: reattach to it. Matters most for
+  // the long unattended runs this tool exists for — an accidental refresh
+  // three hours into a 300-image run must not lose sight of it.
   let attached = false;
   try {
     const s = await api('/api/sessions');
@@ -1818,28 +2059,38 @@ $('sheet-new-btn').addEventListener('click', async () => {
       savePaths();
       attached = true;
     }
-  } catch (e) { /* fall through to the chooser */ }
+  } catch (e) { /* fall through to the normal load below */ }
 
-  // Setup (packages/Chrome/sign-in/project) is environment state, not
-  // session state, so it's safe and useful to check before any session is
-  // chosen. Everything else stays deliberately untouched below.
-  await refreshSetup();
-
-  if (attached) {
-    await fetchPromptsText();
+  // Every reload otherwise starts genuinely empty — no restored path, no
+  // previous video's prompts, nothing (see savePaths() above for why even
+  // "just remembering a path" turned out to still fail this). Typing a
+  // path, Browsing, or Uploading are the only ways content appears now.
+  if (!attached) {
+    await refreshSetup();
     await refresh();
+
+    // A page reload no longer sits through Flow's own unpredictable
+    // project-creation time (seconds to a couple minutes) just because a
+    // previous page happened to click "New project" and reload before it
+    // resolved — the local prompts/output paths are already valid either
+    // way, and Flow keeps creating the project server-side regardless of
+    // whether anything is still watching for it. Abandon the wait and land
+    // on a genuinely fresh, immediately-usable page instead; "Choose
+    // project" still finds it later if it turns out to be wanted.
+    if (lastRun && lastRun.running && lastRun.kind === 'new_project') {
+      try { await api('/api/setup/cancel-new-session', {method: 'POST'}); }
+      catch (e) { /* already finished on its own — fine either way */ }
+      await refresh();
+    }
+
     polling = setInterval(refresh, 4000);
-  } else {
-    // No session chosen yet: leave the editor, gallery, and counts exactly
-    // as their empty markup defaults, and open the chooser on top of that.
-    // Previously this branch still loaded the server's DEFAULT configured
-    // prompts/output path into the page first — on a machine whose default
-    // pointed at a leftover video, that content was visible through the
-    // chooser's translucent backdrop, looking like unexplained random data.
-    // Nothing about the current video may render until one is actually
-    // picked.
-    openSessionSheet();
+    return;
   }
+
+  await fetchPromptsText();
+  await refresh();
+  await refreshSetup();
+  polling = setInterval(refresh, 4000);
 })();
 </script>
 

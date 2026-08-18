@@ -58,6 +58,11 @@ class RunState:
         self.thread = None
         self.running = False
         self.stop_requested = False
+        # Distinct from stop_requested: that means "batch — finish the
+        # current beat, then stop cleanly." This means "setup op (new
+        # project / login) — stop waiting for Flow now," honored inside
+        # create_new_project()'s poll loop within one tick (<=poll seconds).
+        self.cancel_requested = False
         self.log = []
         self.current = None
         self.started_at = None
@@ -71,6 +76,12 @@ class RunState:
         # a multi-hour batch reattaches to it instead of blanking to the
         # session chooser and losing sight of a run that is still going.
         self.active_session = None
+        # What STATE.running currently means -- "batch", "login", or
+        # "new_project" -- so a client polling generic run/result fields (the
+        # same ones every kind of operation shares) can tell which UI a live
+        # "running" state belongs to, without guessing from other fields that
+        # happen to still be at their defaults early in a run.
+        self.kind = None
 
     def snapshot(self):
 
@@ -85,7 +96,9 @@ class RunState:
 
             return {
                 "running": self.running,
+                "kind": self.kind,
                 "stop_requested": self.stop_requested,
+                "cancel_requested": self.cancel_requested,
                 "log": self.log[-200:],
                 "current": self.current,
                 "started_at": self.started_at,
@@ -503,13 +516,25 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
     def _paths(self, data):
+        """Resolve prompts_file/output_dir from a request body.
 
-        prompts_file = config.resolve_path(
-            data.get("prompts_file") or str(config.PROMPTS_FILE)
-        )
-        output_dir = config.resolve_path(
-            data.get("output_dir") or str(config.OUTPUT_DIR)
-        )
+        Either comes back None if not actually given (missing or blank) —
+        deliberately NOT substituted with a configured default. A silent
+        substitution here previously let Save write to (and Start read
+        from) config.PROMPTS_FILE/OUTPUT_DIR whenever a box was left blank,
+        invisibly out of sync with whatever the other box showed — e.g.
+        Save silently writing an upload into the default prompts file while
+        the Output folder box still pointed at a *different* video's
+        folder, or /api/state trying to read PROJECT_ROOT itself as a file
+        and crashing. Every reload starts blank on purpose (see the
+        blank-on-reload design); callers must require both explicitly.
+        """
+
+        prompts_raw = (data.get("prompts_file") or "").strip()
+        output_raw = (data.get("output_dir") or "").strip()
+
+        prompts_file = config.resolve_path(prompts_raw) if prompts_raw else None
+        output_dir = config.resolve_path(output_raw) if output_raw else None
 
         return prompts_file, output_dir
 
@@ -545,7 +570,7 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/setup":
             from urllib.parse import parse_qs
 
-            query = parse_qs(parsed.query)
+            query = parse_qs(parsed.query, keep_blank_values=True)
             prompts_file = query.get("prompts_file", [None])[0]
 
             return self._send(200, setup_check.run_all(prompts_file=prompts_file))
@@ -559,13 +584,46 @@ class Handler(BaseHTTPRequestHandler):
 
         from urllib.parse import parse_qs
 
-        query = parse_qs(parsed.query)
-        prompts_file = config.resolve_path(
-            query.get("prompts_file", [str(config.PROMPTS_FILE)])[0]
-        )
-        output_dir = config.resolve_path(
-            query.get("output_dir", [str(config.OUTPUT_DIR)])[0]
-        )
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        prompts_raw = query.get("prompts_file", [str(config.PROMPTS_FILE)])[0]
+        output_raw = query.get("output_dir", [str(config.OUTPUT_DIR)])[0]
+
+        # No path chosen yet (the field was sent, but explicitly blank) is a
+        # real, distinct state from "use the server's configured default" —
+        # resolve_path('') would otherwise land on PROJECT_ROOT itself (a
+        # directory), and falling back to the config default would silently
+        # show whatever video that happens to point at, the same "previous
+        # video's data after a blank reload" problem from a different angle.
+        # Nothing to load means exactly that: an empty response, no beats,
+        # no error, run status only.
+        #
+        # Checked independently (OR, not AND): a real crash was reproduced
+        # with only ONE field blank (e.g. output dir set, prompts file
+        # cleared) — resolve_path('') still landed on PROJECT_ROOT for the
+        # blank one, and load_prompts() tried to open that directory as a
+        # file, surfacing a raw PermissionError in the UI. Beat status can't
+        # mean anything until *both* paths are actually chosen anyway.
+        if not prompts_raw.strip() or not output_raw.strip():
+            return self._send(
+                200,
+                {
+                    "run": STATE.snapshot(),
+                    "beats": [],
+                    "counts": {"success": 0, "failed": 0, "pending": 0,
+                               "missing_file": 0, "stale": 0},
+                    "gaps": [],
+                    "prompts_error": None,
+                    "prompts_file": "",
+                    "output_dir": "",
+                    "prompts_exists": False,
+                    "output_dir_exists": False,
+                    "output_file_count": 0,
+                    "avg_duration_seconds": None,
+                },
+            )
+
+        prompts_file = config.resolve_path(prompts_raw)
+        output_dir = config.resolve_path(output_raw)
 
         beats, error = build_beats(prompts_file, output_dir)
 
@@ -616,10 +674,17 @@ class Handler(BaseHTTPRequestHandler):
 
         from urllib.parse import parse_qs
 
-        query = parse_qs(parsed.query)
-        prompts_file = config.resolve_path(
-            query.get("prompts_file", [str(config.PROMPTS_FILE)])[0]
-        )
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        prompts_raw = query.get("prompts_file", [str(config.PROMPTS_FILE)])[0]
+
+        # Same guard as _handle_state: an explicitly blank path means "no
+        # file chosen," not "use the default" — resolve_path('') would
+        # otherwise land on PROJECT_ROOT itself and fail trying to read a
+        # directory as text.
+        if not prompts_raw.strip():
+            return self._send(200, {"exists": False, "text": ""})
+
+        prompts_file = config.resolve_path(prompts_raw)
 
         if not prompts_file.exists():
             return self._send(200, {"exists": False, "text": ""})
@@ -697,6 +762,9 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/setup/new-session":
             return self._handle_new_session(data)
 
+        if route == "/api/setup/cancel-new-session":
+            return self._handle_cancel_new_session()
+
         if route == "/api/browse":
             return self._handle_browse(data)
 
@@ -713,7 +781,12 @@ class Handler(BaseHTTPRequestHandler):
         a batch is running.
         """
 
-        output_dir = config.resolve_path(data.get("output_dir") or "")
+        output_raw = (data.get("output_dir") or "").strip()
+
+        if not output_raw:
+            return self._send(400, {"error": "Set an output folder path first."})
+
+        output_dir = config.resolve_path(output_raw)
 
         if not output_dir.is_dir():
             return self._send(
@@ -767,6 +840,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(409, {"error": "Something is already running."})
 
             STATE.running = True
+            STATE.kind = "login"
             STATE.stop_requested = False
             STATE.log = []
             STATE.current = None
@@ -866,7 +940,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(409, {"error": "Something is already running."})
 
             STATE.running = True
+            STATE.kind = "new_project"
             STATE.stop_requested = False
+            STATE.cancel_requested = False
             STATE.log = []
             STATE.current = None
             STATE.result = None
@@ -898,7 +974,9 @@ class Handler(BaseHTTPRequestHandler):
                 "over two minutes — please wait rather than clicking again.",
             )
             try:
-                url = setup_check.create_new_project()
+                url = setup_check.create_new_project(
+                    should_cancel=lambda: STATE.cancel_requested
+                )
                 setup_check.update_env("FLOW_PROJECT_URL", url)
                 config.PROJECT_URL = url
 
@@ -915,6 +993,27 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.add_log(
                     f"Write this video's beats into {prompts_file.name} and save.",
                     "ok",
+                )
+
+            except setup_check.ProjectCreationCancelled:
+                # Not an error — the local prompts/output paths are still
+                # valid and set up; only the wait for Flow's confirmation
+                # was abandoned. Flow may still finish creating it server
+                # side regardless of this process having stopped watching.
+                with STATE.lock:
+                    STATE.result = {
+                        "new_session": True,
+                        "slug": slug,
+                        "prompts_file": str(prompts_file),
+                        "output_dir": str(output_dir),
+                        "project_url": None,
+                        "cancelled": True,
+                    }
+                STATE.add_log(
+                    "Stopped waiting for Flow. Local files are ready — use "
+                    "\"Choose project\" later if the project shows up and "
+                    "you want it.",
+                    "warn",
                 )
 
             except Exception as e:
@@ -944,6 +1043,7 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 with STATE.lock:
                     STATE.running = False
+                    STATE.cancel_requested = False
                     STATE.finished_at = time.time()
 
         threading.Thread(target=worker, daemon=True).start()
@@ -953,6 +1053,14 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_save_prompts(self, data):
 
         prompts_file, _ = self._paths(data)
+
+        if prompts_file is None:
+            return self._send(
+                400,
+                {"error": "Set a prompts file path first (type one, Browse…, "
+                          "or use Setup → New project)."},
+            )
+
         text = data.get("text", "")
 
         try:
@@ -991,6 +1099,13 @@ class Handler(BaseHTTPRequestHandler):
 
             prompts_file, output_dir = self._paths(data)
 
+            if prompts_file is None or output_dir is None:
+                return self._send(
+                    400,
+                    {"error": "Set both a prompts file and an output folder "
+                              "before starting."},
+                )
+
             if not prompts_file.exists():
                 return self._send(400, {"error": f"Prompts file not found: {prompts_file}"})
 
@@ -1010,6 +1125,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, {"error": f"limit {e}"})
 
             STATE.running = True
+            STATE.kind = "batch"
             STATE.stop_requested = False
             STATE.log = []
             STATE.current = None
@@ -1056,6 +1172,29 @@ class Handler(BaseHTTPRequestHandler):
         )
 
         return self._send(200, {"stopping": True})
+
+    def _handle_cancel_new_session(self):
+        """Abandon waiting on an in-flight new-project creation.
+
+        Unlike a batch run, there's no in-progress generation work to lose —
+        the click already happened, Flow keeps creating the project on its
+        own regardless — so this just stops *this process* from continuing
+        to wait on it, honored within one poll tick (see create_new_project's
+        should_cancel). Used both by an explicit Cancel click and by a page
+        reload that no longer wants to sit through Flow's own unpredictable
+        completion time.
+        """
+
+        with STATE.lock:
+
+            if not STATE.running or STATE.kind != "new_project":
+                return self._send(400, {"error": "No new-project creation in progress."})
+
+            STATE.cancel_requested = True
+
+        STATE.add_log("Stopping the wait for Flow's confirmation…", "warn")
+
+        return self._send(200, {"cancelling": True})
 
 
 def serve(host=HOST, port=PORT):
