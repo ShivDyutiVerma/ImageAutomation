@@ -452,42 +452,6 @@ class FlowAutomation:
 
         return True
 
-    def _ensure_agent_mode_off(self):
-        """Turn off Flow's "Agent" (conversational) mode if it's on.
-
-        Confirmed live (2026-08-18) by toggling it and screenshotting both
-        states: with Agent mode on, Create routes every generation through
-        Flow's slower chat-based agent flow (it narrates a plan, "thinks",
-        generates, then reports back) instead of creating the image
-        directly, and the right panel much more readily drifts to the
-        Agent Instructions sub-page mid-generation (see
-        _switch_to_create_tab — this is very likely the actual root cause
-        of that). Turning it off restores the plain, direct, single-shot
-        Create flow this automation is built around and confirmed working
-        against for the rest of this project. Called at the start of every
-        generate_image(), not just once, since there's no confirmed cause
-        for why it was ever on — only that it can be — so nothing rules
-        out it (or something else) turning it back on between beats.
-        """
-
-        buttons = self.flow_page.locator("button")
-
-        for i in range(buttons.count()):
-
-            try:
-                text = buttons.nth(i).inner_text()
-            except Exception:
-                continue
-
-            if text.strip() == "Agent":
-                try:
-                    if buttons.nth(i).get_attribute("aria-pressed") == "true":
-                        buttons.nth(i).click(timeout=2000)
-                        time.sleep(0.5)
-                except Exception:
-                    pass
-                return
-
     def _switch_to_create_tab(self):
         """Back out of a drilled-into sub-page (Agent Instructions,
         Settings) if one is open instead of the main Create view.
@@ -747,17 +711,6 @@ class FlowAutomation:
         an ordinary retryable failure since there's no evidence it's
         permanent.
 
-        Also tries _switch_to_create_tab() on every poll, not just once
-        before starting (see wait_until_ready): confirmed live (2026-08-18)
-        that Flow can jump to the Agent Instructions sub-page WHILE a
-        generation is already in flight, not only between beats, and while
-        parked there this loop can't see either a finished image or a
-        failure message — both live in the same panel area Agent
-        Instructions has taken over. Safe to call on every iteration: it's
-        a same-page navigation, not a reload, so it doesn't touch the
-        media grid where images actually live, and the generation itself
-        is a server-side job that doesn't depend on which panel the client
-        happens to be showing.
         """
 
         timeout = timeout or config.GENERATION_TIMEOUT
@@ -765,8 +718,6 @@ class FlowAutomation:
         start = time.time()
 
         while True:
-
-            self._switch_to_create_tab()
 
             failure_message = self._generation_failure_message()
 
@@ -825,7 +776,6 @@ class FlowAutomation:
         self.bring_to_front()
         self.close_popups()
         self.wait_until_ready()
-        self._ensure_agent_mode_off()
 
         before = set(self.get_generated_urls())
         before_failure_message = self._generation_failure_message()
