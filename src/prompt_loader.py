@@ -3,12 +3,18 @@ import re
 import config
 
 # "BEAT 8", "Beat 12:", tolerant of a trailing colon and extra whitespace.
-# MULTILINE so ^/$ anchor per line — this is matched both against whole
-# multi-line file contents (_looks_like_beat_blocks) and single split lines
-# (_parse_beat_blocks); without it, ^/$ would only anchor to the very start
-# and end of whatever string is passed in, silently breaking detection
+# A colon may be followed by inline narration on the same line — e.g. BEAT 1:
+# "Egypt looks like one of the worst places on Earth" — which group(2)
+# captures; a bare "BEAT 8" with no colon must still end the line, so plain
+# prose that happens to start with "BEAT <number>" doesn't get mistaken for a
+# header. MULTILINE so ^/$ anchor per line — this is matched both against
+# whole multi-line file contents (_looks_like_beat_blocks) and single split
+# lines (_parse_beat_blocks); without it, ^/$ would only anchor to the very
+# start and end of whatever string is passed in, silently breaking detection
 # against the full file text.
-BEAT_HEADER = re.compile(r"^\s*BEAT\s+(\d+)\s*:?\s*$", re.IGNORECASE | re.MULTILINE)
+BEAT_HEADER = re.compile(
+    r"^\s*BEAT\s+(\d+)\s*(?::\s*(.*))?$", re.IGNORECASE | re.MULTILINE
+)
 
 # Timestamped script format, as produced by the user's script-writing chat:
 #
@@ -145,6 +151,11 @@ def _parse_beat_blocks(raw_text, path):
     gaps independent of file order. Narration is reference metadata only
     (carried through to the manifest for the user's benefit); it is never
     sent to Flow and never affects the prompt's change-detection hash.
+
+    Narration may appear inline on the header line itself
+    (BEAT 1: "narration") or alone on the line right after the header — both
+    are accepted since AI-assistant-generated scripts commonly use the
+    inline form.
     """
 
     lines = raw_text.splitlines()
@@ -162,18 +173,21 @@ def _parse_beat_blocks(raw_text, path):
             continue
 
         beat_number = int(header.group(1))
+        inline_trailing = (header.group(2) or "").strip()
         i += 1
 
-        while i < n and not lines[i].strip():
-            i += 1
+        narration = _strip_quotes(inline_trailing) or None if inline_trailing else None
 
-        narration = None
+        if narration is None:
 
-        if i < n:
-            found = _match_narration(lines[i])
-            if found is not None:
-                narration = found
+            while i < n and not lines[i].strip():
                 i += 1
+
+            if i < n:
+                found = _match_narration(lines[i])
+                if found is not None:
+                    narration = found
+                    i += 1
 
         while i < n and not lines[i].strip():
             i += 1
