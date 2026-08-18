@@ -2,18 +2,21 @@ import re
 
 import config
 
-# "BEAT 8", "Beat 12:", tolerant of a trailing colon and extra whitespace.
-# A colon may be followed by inline narration on the same line — e.g. BEAT 1:
-# "Egypt looks like one of the worst places on Earth" — which group(2)
-# captures; a bare "BEAT 8" with no colon must still end the line, so plain
-# prose that happens to start with "BEAT <number>" doesn't get mistaken for a
-# header. MULTILINE so ^/$ anchor per line — this is matched both against
-# whole multi-line file contents (_looks_like_beat_blocks) and single split
-# lines (_parse_beat_blocks); without it, ^/$ would only anchor to the very
-# start and end of whatever string is passed in, silently breaking detection
-# against the full file text.
+# "BEAT 8", "PART 12:", "BEAT 3 — ...". Tolerant of a colon, hyphen, or
+# em/en dash separator, with optional inline narration after it — e.g.
+# BEAT 1: "Egypt looks like one of the worst places on Earth" or
+# BEAT 1 — "Yesterday, you were confident." — which group(2) captures.
+# "PART" is accepted as a synonym for "BEAT" since some scripts use it
+# instead. A bare "BEAT 8" with no separator must still end the line, so
+# plain prose that happens to start with "BEAT <number>" doesn't get
+# mistaken for a header. MULTILINE so ^/$ anchor per line — this is matched
+# both against whole multi-line file contents (_looks_like_beat_blocks) and
+# single split lines (_parse_beat_blocks); without it, ^/$ would only anchor
+# to the very start and end of whatever string is passed in, silently
+# breaking detection against the full file text.
 BEAT_HEADER = re.compile(
-    r"^\s*BEAT\s+(\d+)\s*(?::\s*(.*))?$", re.IGNORECASE | re.MULTILINE
+    r"^\s*(?:BEAT|PART)\s+(\d+)\s*(?:[:\-—–]\s*(.*))?$",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 # Timestamped script format, as produced by the user's script-writing chat:
@@ -28,10 +31,54 @@ BEAT_HEADER = re.compile(
 TIMESTAMP_HEADER = re.compile(
     r"^\s*(\d{1,3}:\d{2})\s*[—–\-:]\s*(.*)$", re.MULTILINE
 )
-IMAGE_LINE = re.compile(r"^\s*image\s*:\s*(.*)$", re.IGNORECASE)
-VIDEO_LINE = re.compile(r"^\s*video\s*:\s*(.*)$", re.IGNORECASE)
+
+# A bare numbered-list marker carrying inline narration, e.g. '1. "..."' —
+# the same positional-block shape as TIMESTAMP_HEADER, just numbered instead
+# of timestamped. Requires narration text on the marker's own line (the "+"
+# instead of "*"), so an ordinary numbered list inside a prompt paragraph
+# doesn't get mistaken for a beat marker.
+NUMBERED_HEADER = re.compile(r"^\s*(\d{1,4})[.)]\s+(.+)$", re.MULTILINE)
+
+# "Image:" or "Image Prompt:" — only this line's content is ever sent to
+# Flow as a prompt. "Video:"/"Video Prompt:" is motion direction for a video
+# tool and is always dropped. "Script:"/"Narration:" is an alternative to a
+# bare quoted narration line, used by some script exports instead.
+IMAGE_LINE = re.compile(r"^\s*image(?:\s*prompt)?\s*:\s*(.*)$", re.IGNORECASE)
+VIDEO_LINE = re.compile(r"^\s*video(?:\s*prompt)?\s*:\s*(.*)$", re.IGNORECASE)
+NARRATION_LINE = re.compile(r"^\s*(?:script|narration)\s*:\s*(.*)$", re.IGNORECASE)
 
 QUOTE_PAIRS = {'"': '"', "“": "”"}
+
+# High-confidence phrasings of a stated total — "all 184 image prompts",
+# "184 image prompts", "all 86 prompts", "all N beats" — anchored to a
+# domain word so ordinary prompt prose ("holding all 3 balloons") can't
+# false-positive. Cross-checked against the actual parsed count in
+# load_prompts: AI-assistant chat exports sometimes leave a draft
+# confirmation ("Good to proceed with all 184?") or an earlier preview
+# section mixed into the file, and a mismatch is exactly the symptom of
+# that — see docs/PROGRESS.md 2026-08-18 for the case that motivated this.
+STATED_COUNT_PATTERNS = [
+    re.compile(r"\ball\s+(\d{1,4})\s+image\s*prompts?\b", re.IGNORECASE),
+    re.compile(r"\b(\d{1,4})\s+image\s*prompts?\b", re.IGNORECASE),
+    re.compile(r"\ball\s+(\d{1,4})\s+prompts?\b", re.IGNORECASE),
+    re.compile(r"\ball\s+(\d{1,4})\s+beats?\b", re.IGNORECASE),
+]
+
+
+def _stated_counts(raw_text):
+    """Every distinct total the file's own text claims to contain, via
+    STATED_COUNT_PATTERNS. Returns an empty set if the file never states one
+    — most files don't, and that's fine; this is a cross-check, not a
+    requirement.
+    """
+
+    found = set()
+
+    for pattern in STATED_COUNT_PATTERNS:
+        for m in pattern.finditer(raw_text):
+            found.add(int(m.group(1)))
+
+    return found
 
 
 def _match_narration(line):
@@ -60,14 +107,15 @@ def _looks_like_beat_blocks(raw_text):
 
 
 def _looks_like_script_blocks(raw_text):
-    """Timestamped script format needs BOTH signals to claim a file.
+    """Timestamped (or numbered-list) script format needs BOTH signals to
+    claim a file.
 
-    A timestamp alone is too weak — a plain prompt could legitimately mention
-    one. Requiring an Image: line as well means this only ever fires on files
-    actually laid out as script blocks.
+    A timestamp or numbered marker alone is too weak — a plain prompt could
+    legitimately mention one. Requiring an Image: line as well means this
+    only ever fires on files actually laid out as script blocks.
     """
 
-    if not TIMESTAMP_HEADER.search(raw_text):
+    if not (TIMESTAMP_HEADER.search(raw_text) or NUMBERED_HEADER.search(raw_text)):
         return False
 
     return any(IMAGE_LINE.match(line) for line in raw_text.splitlines())
@@ -83,13 +131,24 @@ def _strip_quotes(text):
     return text
 
 
-def _parse_script_blocks(raw_text, path):
-    """Parse the 'timestamp / Image: / Video:' script format.
+def _script_marker(line):
+    """A block-start line for the script family: a MM:SS timestamp or a
+    bare numbered-list marker (see NUMBERED_HEADER) — both carry narration
+    as their own trailing text and use the block's file position, not the
+    marker's number, as the beat's identity.
+    """
 
-    A new beat starts at every timestamp line. Its number is the block's
-    position (1-based), because this format carries no explicit beat numbers —
-    the timestamps are positions in the video, not stable identities, and
-    deriving a filename from '0:00' is not possible.
+    return TIMESTAMP_HEADER.match(line) or NUMBERED_HEADER.match(line)
+
+
+def _parse_script_blocks(raw_text, path):
+    """Parse the 'timestamp (or numbered) / Image: / Video:' script format.
+
+    A new beat starts at every marker line. Its number is the block's
+    position (1-based), because this format carries no stable beat identity —
+    a timestamp is a position in the video and a numbered-list marker is
+    just the file's own order, so deriving a filename from either directly
+    is not possible (or not safe against reordering).
 
     Only the Image: line becomes the prompt. Video: lines are deliberately
     dropped: this tool generates images, and feeding a motion description to
@@ -105,21 +164,21 @@ def _parse_script_blocks(raw_text, path):
 
     while i < n:
 
-        header = TIMESTAMP_HEADER.match(lines[i])
+        header = _script_marker(lines[i])
 
         if not header:
             i += 1
             continue
 
-        timestamp = header.group(1)
+        marker = header.group(1)
         narration = _strip_quotes(header.group(2)) or None
         position += 1
         i += 1
 
         image_parts = []
 
-        # Consume up to the next timestamp line, collecting only Image: content.
-        while i < n and not TIMESTAMP_HEADER.match(lines[i]):
+        # Consume up to the next marker line, collecting only Image: content.
+        while i < n and not _script_marker(lines[i]):
 
             found = IMAGE_LINE.match(lines[i])
 
@@ -132,7 +191,7 @@ def _parse_script_blocks(raw_text, path):
 
         if not prompt_text:
             raise ValueError(
-                f"The beat at {timestamp} in {path} has no 'Image:' line, so "
+                f"The beat at {marker} in {path} has no 'Image:' line, so "
                 f"there is no image prompt for it. Every beat needs one — add "
                 f"it, or remove the beat."
             )
@@ -153,9 +212,16 @@ def _parse_beat_blocks(raw_text, path):
     sent to Flow and never affects the prompt's change-detection hash.
 
     Narration may appear inline on the header line itself
-    (BEAT 1: "narration") or alone on the line right after the header — both
-    are accepted since AI-assistant-generated scripts commonly use the
-    inline form.
+    (BEAT 1: "narration"), alone on the line right after the header (in
+    quotes), or as a labeled "Script:"/"Narration:" line — all three are
+    accepted since AI-assistant-generated scripts vary in which they use.
+
+    The body between one header and the next becomes the prompt verbatim,
+    UNLESS it contains one or more "Image:"/"Image Prompt:" labeled lines —
+    in that case only those (label stripped) are used, and any
+    "Video:"/"Video Prompt:" line is dropped, the same rule the timestamped
+    script format uses and for the same reason: a motion direction fed to an
+    image generator produces a wrong image while looking like it worked.
     """
 
     lines = raw_text.splitlines()
@@ -188,17 +254,40 @@ def _parse_beat_blocks(raw_text, path):
                 if found is not None:
                     narration = found
                     i += 1
+                else:
+                    found = NARRATION_LINE.match(lines[i])
+                    if found is not None:
+                        narration = found.group(1).strip() or None
+                        i += 1
 
         while i < n and not lines[i].strip():
             i += 1
 
         prompt_lines = []
+        image_lines = []
 
         while i < n and not BEAT_HEADER.match(lines[i]):
-            prompt_lines.append(lines[i])
+
+            line = lines[i]
+
+            if line.strip():
+
+                video_found = VIDEO_LINE.match(line)
+                image_found = None if video_found else IMAGE_LINE.match(line)
+
+                if video_found:
+                    pass
+                elif image_found:
+                    image_lines.append(image_found.group(1).strip())
+                else:
+                    prompt_lines.append(line)
+
             i += 1
 
-        prompt_text = " ".join(line.strip() for line in prompt_lines if line.strip())
+        if image_lines:
+            prompt_text = " ".join(part for part in image_lines if part)
+        else:
+            prompt_text = " ".join(line.strip() for line in prompt_lines if line.strip())
 
         if not prompt_text:
             raise ValueError(
@@ -290,6 +379,17 @@ def load_prompts(prompts_file=None):
     if not prompts:
         raise ValueError(
             f"No prompts found in {path}"
+        )
+
+    stated = _stated_counts(raw_text)
+
+    if stated and len(prompts) not in stated:
+        raise ValueError(
+            f"Parsed {len(prompts)} prompt(s) from {path}, but the file's "
+            f"own text claims {sorted(stated)}. That mismatch usually means "
+            f"leftover chat text — a draft confirmation, an earlier preview "
+            f"section — got copied into the file along with the real "
+            f"prompts. Check the file before trusting this count."
         )
 
     return prompts
