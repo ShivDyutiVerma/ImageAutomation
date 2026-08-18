@@ -6,17 +6,29 @@ import config
 # em/en dash separator, with optional inline narration after it — e.g.
 # BEAT 1: "Egypt looks like one of the worst places on Earth" or
 # BEAT 1 — "Yesterday, you were confident." — which group(2) captures.
-# "PART" is accepted as a synonym for "BEAT" since some scripts use it
-# instead. A bare "BEAT 8" with no separator must still end the line, so
-# plain prose that happens to start with "BEAT <number>" doesn't get
+# BEAT_KEYWORDS covers the synonyms seen in real script exports so far;
+# _looks_like_beat_blocks_unrecognized() below is the actual future-proofing
+# — it catches a keyword NOT in this list instead of silently mis-parsing,
+# so a new spelling gets reported rather than turning into another 935-vs-
+# 184 incident. A bare "BEAT 8" with no separator must still end the line,
+# so plain prose that happens to start with "BEAT <number>" doesn't get
 # mistaken for a header. MULTILINE so ^/$ anchor per line — this is matched
 # both against whole multi-line file contents (_looks_like_beat_blocks) and
 # single split lines (_parse_beat_blocks); without it, ^/$ would only anchor
 # to the very start and end of whatever string is passed in, silently
 # breaking detection against the full file text.
+BEAT_KEYWORDS = r"BEAT|PART|SCENE|SHOT|STEP|CLIP"
 BEAT_HEADER = re.compile(
-    r"^\s*(?:BEAT|PART)\s+(\d+)\s*(?:[:\-—–]\s*(.*))?$",
+    rf"^\s*(?:{BEAT_KEYWORDS})\s+(\d+)\s*(?:[:\-—–]\s*(.*))?$",
     re.IGNORECASE | re.MULTILINE,
+)
+
+# A generic "<word> <number>" line — much looser than BEAT_HEADER, used only
+# to detect a file that IS laid out as numbered blocks under a keyword this
+# tool doesn't recognize yet (see _unrecognized_numbered_keyword). Not used
+# for actual parsing, only for refusing to guess.
+GENERIC_NUMBERED_HEADER = re.compile(
+    r"^\s*([A-Za-z]{3,12})\s+(\d{1,4})\s*(?:[:\-—–].*)?$", re.MULTILINE
 )
 
 # Timestamped script format, as produced by the user's script-writing chat:
@@ -79,6 +91,57 @@ def _stated_counts(raw_text):
             found.add(int(m.group(1)))
 
     return found
+
+
+_KNOWN_KEYWORDS = {word.upper() for word in BEAT_KEYWORDS.split("|")}
+
+
+def _unrecognized_numbered_keyword(raw_text):
+    """A repeating '<Word> <number>' header using a keyword NOT in
+    BEAT_KEYWORDS — e.g. 'CHAPTER 3', 'SEGMENT 12' — is strong evidence the
+    file IS laid out in numbered blocks, just under a keyword this tool
+    hasn't been taught yet. Requiring 3+ repeats of the SAME word keeps an
+    incidental sentence ("Step 3 of the recipe...") from false-triggering.
+    Returns the keyword, or None.
+    """
+
+    counts = {}
+
+    for m in GENERIC_NUMBERED_HEADER.finditer(raw_text):
+
+        word = m.group(1).upper()
+
+        if word not in _KNOWN_KEYWORDS:
+            counts[word] = counts.get(word, 0) + 1
+
+    for word, n in counts.items():
+        if n >= 3:
+            return word
+
+    return None
+
+
+def _looks_structured_but_unrecognized(raw_text):
+    """A heuristic safety net for formats with no numbered header at all to
+    catch, e.g. a keyword-free block style. A genuine plain-format file
+    (one long prompt per line) has fairly uniform line lengths; a
+    structured file with an unrecognized layout tends to mix short
+    label/header lines with long prose paragraphs. Requiring a meaningful
+    share of BOTH is what tells them apart — a uniform-short or
+    uniform-long file (including this project's own short test fixtures)
+    never trips it.
+    """
+
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+
+    if len(lines) < 8:
+        return False
+
+    word_counts = [len(line.split()) for line in lines]
+    short = sum(1 for w in word_counts if w <= 6)
+    long_ = sum(1 for w in word_counts if w >= 25)
+
+    return short >= len(lines) * 0.12 and long_ >= len(lines) * 0.12
 
 
 def _match_narration(line):
@@ -376,7 +439,14 @@ def load_prompts(prompts_file=None):
 
     Order matters: plain format is the fallback and would happily accept a
     structured file, turning every timestamp and Video: line into its own
-    bogus image prompt. The structured formats are therefore tested first.
+    bogus image prompt. The structured formats are therefore tested first,
+    and immediately before falling back, two guards
+    (_unrecognized_numbered_keyword, _looks_structured_but_unrecognized)
+    check for signs the file IS structured under a layout this tool just
+    doesn't know yet — refusing to guess rather than repeating the incident
+    that motivated them (184 real beats silently read as 935 bogus ones;
+    see docs/PROGRESS.md 2026-08-18). This is the actual future-proofing:
+    a new format variant gets a clear error instead of a silent misparse.
 
     The index is the prompt's permanent identity in both cases: it decides
     the output filename and is never inferred from a running counter of
@@ -397,6 +467,29 @@ def load_prompts(prompts_file=None):
     elif _looks_like_script_blocks(raw_text):
         prompts = _parse_script_blocks(raw_text, path)
     else:
+
+        unknown_keyword = _unrecognized_numbered_keyword(raw_text)
+
+        if unknown_keyword:
+            known = ", ".join(w.title() for w in BEAT_KEYWORDS.split("|"))
+            raise ValueError(
+                f"{path} looks like it's laid out in '{unknown_keyword} "
+                f"<number>' blocks, but that keyword isn't one this tool "
+                f"recognizes yet (known: {known}). Refusing to guess — "
+                f"share the file's header format and it can be added."
+            )
+
+        if _looks_structured_but_unrecognized(raw_text):
+            raise ValueError(
+                f"{path} doesn't match any recognized format (BEAT/PART/"
+                f"etc. blocks, or a timestamped/numbered script), but its "
+                f"mix of short and long lines suggests it IS structured — "
+                f"some header or label style this tool doesn't know yet. "
+                f"Refusing to guess rather than risk sending header/label "
+                f"text to Flow as bogus prompts. Share the file's format "
+                f"and it can be added."
+            )
+
         prompts = [
             (i, line.strip(), None)
             for i, line in enumerate(
