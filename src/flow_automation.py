@@ -453,21 +453,24 @@ class FlowAutomation:
         return True
 
     def _switch_to_create_tab(self):
-        """Click back to the Create tab if some other one (Agent
-        Instructions, Settings) is active instead.
+        """Back out of a drilled-into sub-page (Agent Instructions,
+        Settings) if one is open instead of the main Create view.
 
-        Confirmed live (2026-08-18): the right-hand panel has at least
-        three tabs — Create, Agent Instructions, Settings — sharing the
-        same panel area, and it can end up parked on Agent Instructions
-        (observed right after a content-policy rejection) with neither a
-        prompt editor nor a Create button reachable at all. Without this,
-        wait_until_ready() would burn its full timeout waiting for controls
-        that were never going to appear on that tab, reload (which doesn't
-        change which tab is active), and burn the full timeout again — this
-        is what turned one beat into a 64-minute stall live. The tab
-        button's own text is its icon ligature immediately followed by
-        "Create" with no separator ("add_2Create"), which distinguishes it
-        from the actual submit button ("arrow_forwardCreate").
+        Confirmed live (2026-08-18) by screenshotting the page during a
+        3834-second (64-minute) stall on one beat: "Agent Instructions" is
+        not a sibling tab next to Create, it's a sub-page you navigate INTO
+        — landing there (observed right after a content-policy rejection)
+        leaves neither a prompt editor nor a Create button reachable, and
+        its own "Create" button exists in the DOM but is hidden, so trying
+        to click it directly times out. The way out is its own visible
+        "Back" control (distinct from the unrelated "Go Back" button
+        elsewhere on the page). Without this, wait_until_ready() would
+        burn its full timeout waiting for controls that could never appear
+        while parked here, reload (which doesn't back out of the
+        sub-page), and burn the full timeout again — exactly what produced
+        the 64-minute stall. Confirmed live that no such "Back" button
+        exists when already on the normal Create view, so this is safe to
+        call unconditionally without first checking which state it's in.
         """
 
         buttons = self.flow_page.locator("button")
@@ -479,10 +482,13 @@ class FlowAutomation:
             except Exception:
                 continue
 
-            if text.strip() == "add_2Create":
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+            if lines and lines[-1] == "Back":
                 try:
-                    buttons.nth(i).click(timeout=2000)
-                    time.sleep(0.5)
+                    if buttons.nth(i).is_visible():
+                        buttons.nth(i).click(timeout=2000)
+                        time.sleep(0.5)
                 except Exception:
                     pass
                 return
