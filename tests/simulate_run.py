@@ -43,7 +43,11 @@ import config  # noqa: E402
 import main as main_mod  # noqa: E402
 import manifest as manifest_mod  # noqa: E402
 import prompt_loader  # noqa: E402
-from flow_automation import FlowGenerationError, FlowSetupError  # noqa: E402
+from flow_automation import (  # noqa: E402
+    FlowContentPolicyError,
+    FlowGenerationError,
+    FlowSetupError,
+)
 from manifest import Manifest  # noqa: E402
 
 PASS = FAIL = 0
@@ -90,6 +94,7 @@ class FakePage:
 class FakeFlow:
 
     fail_for = set()
+    content_policy_for = set()
     raise_setup_at = None
     project_missing = False
     calls = []
@@ -109,6 +114,10 @@ class FakeFlow:
         index = int(prompt.split("#")[1].split()[0])
         if FakeFlow.raise_setup_at == index:
             raise FlowSetupError("simulated browser loss")
+        if index in FakeFlow.content_policy_for:
+            raise FlowContentPolicyError(
+                f"This prompt might violate our policies -- simulated for {index}"
+            )
         if index in FakeFlow.fail_for:
             raise FlowGenerationError(f"simulated generation failure for {index}")
         return f"https://example.test/img/{index}"
@@ -128,10 +137,11 @@ main_mod.FlowAutomation = FakeFlow
 main_mod.download_image = fake_download
 
 
-def reset(n=300, fail_for=(), setup_at=None):
+def reset(n=300, fail_for=(), setup_at=None, content_policy_for=()):
     shutil.rmtree(WORK / "output", ignore_errors=True)
     write_prompts([f"prompt #{i} describing beat {i}" for i in range(1, n + 1)])
     FakeFlow.fail_for = set(fail_for)
+    FakeFlow.content_policy_for = set(content_policy_for)
     FakeFlow.raise_setup_at = setup_at
     FakeFlow.project_missing = False
     FakeFlow.calls = []
@@ -735,6 +745,26 @@ check("counts() no longer counts the orphaned entries either",
       sum(man.counts().values()) == 5, man.counts())
 check("missing_indices() no longer names orphaned beats that don't exist",
       all(i <= 5 for i in man.missing_indices()), man.missing_indices())
+
+
+heading("TEST 30: a long stretch of content-policy rejections never pauses the run")
+# Regression guard: content-policy rejections used to count toward the
+# consecutive-failure circuit breaker exactly like real technical failures,
+# so a script section with several sensitive beats in a row (violence,
+# etc.) would trip a 5-minute cooldown and, eventually, abort the whole
+# run -- for a condition no amount of waiting could ever fix. Cooldowns are
+# disabled in this test env (FLOW_MAX_COOLDOWNS=0), so the old behavior
+# would show up here as an immediate hard abort, not a slow pause.
+reset(10, content_policy_for=set(range(1, 8)))  # 7 in a row: over the limit of 5
+outcome = main_mod.run_batch(config.PROMPTS_FILE, config.OUTPUT_DIR)
+check("the run does not abort despite 7 consecutive rejections (over the limit of 5)",
+      outcome.get("aborted_reason") is None, outcome.get("aborted_reason"))
+check("all 10 beats were actually attempted, not stopped partway",
+      len(FakeFlow.calls) == 10, FakeFlow.calls)
+check("the 3 real beats after the rejection streak still succeeded",
+      outcome.get("succeeded") == 3, outcome)
+check("the 7 rejected beats are recorded failed, not silently dropped",
+      outcome.get("failed") == 7, outcome)
 
 
 print("\n" + "=" * 62)

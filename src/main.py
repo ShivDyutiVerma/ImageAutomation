@@ -201,8 +201,14 @@ def process_prompt(flow, index, prompt, manifest, output_dir):
     directory, so defaulting the image somewhere else would split the two
     apart and leave resume trusting a manifest whose images aren't there.
 
-    Returns True on success. Raises FlowSetupError upward, since that means the
-    environment itself is broken and no further prompt can succeed.
+    Returns one of "success", "content_policy", or "failed" — the caller
+    (run_batch) uses this, not just a bool, so it can tell a content-policy
+    rejection apart from a real technical failure: a rejection says
+    something about that one prompt, not about whether the Flow session or
+    account is healthy, and must not count toward the consecutive-failure
+    circuit breaker the way a real failure does (see run_batch). Raises
+    FlowSetupError upward, since that means the environment itself is
+    broken and no further prompt can succeed.
     """
 
     stem = f"{index:03d}"
@@ -224,7 +230,7 @@ def process_prompt(flow, index, prompt, manifest, output_dir):
 
             console_write(f"  saved {saved}")
 
-            return True
+            return "success"
 
         except FlowSetupError:
             raise
@@ -244,7 +250,7 @@ def process_prompt(flow, index, prompt, manifest, output_dir):
 
             console_write(f"  REJECTED (content policy, not retried): {e}")
 
-            return False
+            return "content_policy"
 
         except Exception as e:
 
@@ -261,7 +267,7 @@ def process_prompt(flow, index, prompt, manifest, output_dir):
 
     console_write(f"  FAILED after {config.MAX_ATTEMPTS} attempts: {last_error}")
 
-    return False
+    return "failed"
 
 
 def positive_int(value):
@@ -515,7 +521,9 @@ def run_batch(
 
             beat_started = time.time()
 
-            succeeded = process_prompt(flow, index, prompt, manifest, output_dir)
+            outcome_kind = process_prompt(flow, index, prompt, manifest, output_dir)
+            succeeded = outcome_kind == "success"
+            content_policy = outcome_kind == "content_policy"
 
             entry = manifest.entry(index) or {}
 
@@ -525,6 +533,7 @@ def run_batch(
                 position=position,
                 total=len(selected),
                 succeeded=succeeded,
+                content_policy=content_policy,
                 file=entry.get("file"),
                 error=entry.get("error"),
                 seconds=time.time() - beat_started,
@@ -536,6 +545,17 @@ def run_batch(
                 # full trust restored, including the cooldown budget.
                 consecutive_failures = 0
                 cooldowns_used = 0
+            elif content_policy:
+                # Says something about this one prompt, nothing about
+                # whether the Flow session/account is healthy — must not
+                # feed the circuit breaker meant to catch a genuinely
+                # broken environment (an expired session, exhausted
+                # credits), or a run through a script with several
+                # sensitive beats in a row would trip a 5-minute cooldown
+                # (and, eventually, an abort) for a condition no amount of
+                # waiting or retrying could ever fix. Left exactly as it
+                # was; only a real success or a real failure moves it.
+                pass
             else:
                 consecutive_failures += 1
 
