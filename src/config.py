@@ -87,6 +87,19 @@ GENERATION_TIMEOUT = _int("FLOW_GENERATION_TIMEOUT", 180)
 POLL_INTERVAL = _int("FLOW_POLL_INTERVAL", 2)
 DELAY_BETWEEN_PROMPTS = _int("FLOW_DELAY_BETWEEN_PROMPTS", 3)
 
+# Flow can produce a second (or later) image from a single Create click,
+# arriving staggered rather than all at once -- confirmed live (2026-08-18)
+# with gaps of 10-14s between what looked like two consecutive beats but
+# were actually one beat's own delayed second image. wait_for_new_images
+# waits for the set of new images to hold steady for SETTLE_STABLE_SECONDS
+# before considering a beat's generation finished, so a straggler lands
+# within THIS beat's wait rather than getting mistaken for the next beat's
+# own result. SETTLE_TIMEOUT bounds that stabilization phase on its own,
+# so a straggler that never stops trickling in can't consume the whole
+# GENERATION_TIMEOUT budget.
+SETTLE_STABLE_SECONDS = _int("FLOW_SETTLE_STABLE_SECONDS", 20)
+SETTLE_TIMEOUT = _int("FLOW_SETTLE_TIMEOUT", 60)
+
 MAX_ATTEMPTS = _int("FLOW_MAX_ATTEMPTS", 3)
 RETRY_BACKOFF = _int("FLOW_RETRY_BACKOFF", 10)
 

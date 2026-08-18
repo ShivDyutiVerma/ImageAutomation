@@ -711,6 +711,19 @@ class FlowAutomation:
         an ordinary retryable failure since there's no evidence it's
         permanent.
 
+        Waits for the set of new images to stop growing, not just for it to
+        become non-empty. Confirmed live (2026-08-18): Flow can produce more
+        than one image from a single click even at its "x1" setting, and
+        the extra one can arrive staggered — noticeably after the first —
+        rather than at the same time. generate_image() only ever uses the
+        first new image for this beat, but moving on to the next beat while
+        a second one is still landing left it sitting around uncaptured; by
+        the time the next beat took its own "before" snapshot, that
+        straggler either wasn't there yet (getting wrongly credited to the
+        next beat once it did land) or created the same ambiguity a beat
+        later. Requiring the count to hold steady across two consecutive
+        checks means both settle within this beat's own wait, so the next
+        beat's "before" snapshot is guaranteed to already include them.
         """
 
         timeout = timeout or config.GENERATION_TIMEOUT
@@ -732,16 +745,36 @@ class FlowAutomation:
 
             if new:
 
-                # Re-check after one interval so a transient DOM re-render
-                # can't be mistaken for a finished generation.
-                time.sleep(config.POLL_INTERVAL)
+                # Must hold steady for a real span of time, not just two
+                # consecutive polls — confirmed live (2026-08-18) that a
+                # staggered second image can arrive 10-14s after the first
+                # (from finished_at gaps between consecutive beats that
+                # turned out to share a burst), so a couple of POLL_INTERVAL
+                # ticks apart is nowhere near enough to catch it. Bounded to
+                # SETTLE_TIMEOUT overall so a straggler that never stops
+                # trickling in can't consume the whole GENERATION_TIMEOUT
+                # budget — this is a matter of extra seconds, not minutes.
+                settled = new
+                last_change = time.time()
+                settle_start = time.time()
 
-                confirmed = [
-                    url for url in self.get_generated_urls() if url not in before
-                ]
+                while (
+                    time.time() - last_change < config.SETTLE_STABLE_SECONDS
+                    and time.time() - settle_start < config.SETTLE_TIMEOUT
+                ):
 
-                if confirmed:
-                    return confirmed
+                    time.sleep(config.POLL_INTERVAL)
+
+                    latest = [
+                        url for url in self.get_generated_urls() if url not in before
+                    ]
+
+                    if len(latest) != len(settled):
+                        settled = latest
+                        last_change = time.time()
+
+                if settled:
+                    return settled
 
             if time.time() - start > timeout:
                 raise FlowGenerationError(
