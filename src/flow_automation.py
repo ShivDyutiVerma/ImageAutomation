@@ -710,6 +710,18 @@ class FlowAutomation:
         message Flow gives is still reported accurately, but treated as
         an ordinary retryable failure since there's no evidence it's
         permanent.
+
+        Also tries _switch_to_create_tab() on every poll, not just once
+        before starting (see wait_until_ready): confirmed live (2026-08-18)
+        that Flow can jump to the Agent Instructions sub-page WHILE a
+        generation is already in flight, not only between beats, and while
+        parked there this loop can't see either a finished image or a
+        failure message — both live in the same panel area Agent
+        Instructions has taken over. Safe to call on every iteration: it's
+        a same-page navigation, not a reload, so it doesn't touch the
+        media grid where images actually live, and the generation itself
+        is a server-side job that doesn't depend on which panel the client
+        happens to be showing.
         """
 
         timeout = timeout or config.GENERATION_TIMEOUT
@@ -717,6 +729,8 @@ class FlowAutomation:
         start = time.time()
 
         while True:
+
+            self._switch_to_create_tab()
 
             failure_message = self._generation_failure_message()
 
