@@ -11,6 +11,24 @@ from manifest import Manifest
 from prompt_loader import detect_gaps, load_prompts
 
 
+def console_write(message):
+    """Best-effort progress line to whatever console is attached — never
+    allowed to crash a run over something as inconsequential as a missing
+    one. Confirmed live (2026-08-18): a headless launch (Task Scheduler /
+    pythonw.exe, no console at all) leaves sys.stdout as None, and
+    tqdm.write() raises AttributeError writing to it — which, uncaught,
+    killed an otherwise-successful batch after its very first save. The
+    web UI's own on_event/STATE.add_log path (unaffected by this) is
+    already the real progress channel there; this is purely a CLI/debug
+    nicety and must never be load-bearing.
+    """
+
+    try:
+        tqdm.write(message)
+    except Exception:
+        pass
+
+
 def format_duration(seconds):
 
     seconds = int(seconds)
@@ -204,7 +222,7 @@ def process_prompt(flow, index, prompt, manifest, output_dir):
             manifest.record_success(index, filename, url, attempt)
             manifest.save()
 
-            tqdm.write(f"  saved {saved}")
+            console_write(f"  saved {saved}")
 
             return True
 
@@ -217,14 +235,14 @@ def process_prompt(flow, index, prompt, manifest, output_dir):
 
             if attempt < config.MAX_ATTEMPTS:
                 backoff = config.RETRY_BACKOFF * attempt
-                tqdm.write(f"  attempt {attempt} failed: {e}")
-                tqdm.write(f"  retrying in {backoff}s...")
+                console_write(f"  attempt {attempt} failed: {e}")
+                console_write(f"  retrying in {backoff}s...")
                 time.sleep(backoff)
 
     manifest.record_failure(index, last_error, config.MAX_ATTEMPTS)
     manifest.save()
 
-    tqdm.write(f"  FAILED after {config.MAX_ATTEMPTS} attempts: {last_error}")
+    console_write(f"  FAILED after {config.MAX_ATTEMPTS} attempts: {last_error}")
 
     return False
 
@@ -641,14 +659,14 @@ def main(argv=None):
                 bar.set_description(f"beat {event['index']:03d}")
             label = (f'"{event["narration"]}"' if event["narration"]
                      else event["prompt"][:100])
-            tqdm.write(f"\nbeat {event['index']:03d}: {label}")
+            console_write(f"\nbeat {event['index']:03d}: {label}")
 
         elif kind == "beat_done":
             if state["bar"]:
                 state["bar"].update(1)
 
         elif kind == "cooldown":
-            tqdm.write(
+            console_write(
                 f"\n{config.CONSECUTIVE_FAILURE_LIMIT} beats failed in a row — "
                 f"pausing {event['seconds']}s in case it's transient "
                 f"(cooldown {event['attempt']}/{event['max_attempts']}), "

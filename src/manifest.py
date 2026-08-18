@@ -42,6 +42,12 @@ class Manifest:
             "items": {},
         }
 
+        # Set by reconcile() to the indices the current prompts file
+        # actually has. None until then (nothing to scope by yet), which
+        # pending_indices()/missing_indices() treat as "don't filter" so a
+        # caller that never reconciles keeps its old behavior.
+        self._known_indices = None
+
     @classmethod
     def load(cls, path):
 
@@ -186,14 +192,42 @@ class Manifest:
 
         report["stale"].sort()
 
+        self._known_indices = {int(key) for key in seen}
+
         return report
+
+    def _scoped_items(self):
+        """self.data['items'], excluding entries reconcile() found are no
+        longer in the prompts file at all.
+
+        Without this, an index removed from prompts.txt (or, as happened
+        live on 2026-08-18, hundreds of them at once after fixing a parser
+        bug that had misread one real file as many bogus ones) stays in the
+        manifest as a permanently "pending" entry forever. pending_indices()
+        would then keep selecting it for a real run, and generate_image()
+        would KeyError on it immediately since no current prompt text
+        exists for that index -- crashing an otherwise-healthy run partway
+        through, exactly what happened. reconcile() already computes and
+        reports which indices are stale; this just makes every other method
+        actually honor that instead of only the reconcile() caller seeing it.
+        """
+
+        items = self.data["items"]
+
+        if self._known_indices is None:
+            return items
+
+        return {
+            key: item for key, item in items.items()
+            if int(key) in self._known_indices
+        }
 
     def pending_indices(self):
         """Indices still needing generation, in ascending script order."""
 
         return sorted(
             int(key)
-            for key, item in self.data["items"].items()
+            for key, item in self._scoped_items().items()
             if item.get("status") != STATUS_SUCCESS
         )
 
@@ -240,7 +274,7 @@ class Manifest:
 
         totals = {STATUS_SUCCESS: 0, STATUS_FAILED: 0, STATUS_PENDING: 0}
 
-        for item in self.data["items"].values():
+        for item in self._scoped_items().values():
             status = item.get("status", STATUS_PENDING)
             totals[status] = totals.get(status, 0) + 1
 
@@ -251,6 +285,6 @@ class Manifest:
 
         return sorted(
             int(key)
-            for key, item in self.data["items"].items()
+            for key, item in self._scoped_items().items()
             if item.get("status") != STATUS_SUCCESS
         )

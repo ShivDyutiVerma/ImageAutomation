@@ -694,6 +694,49 @@ check("not one generate_image call succeeded against a dead project",
       FakeFlow.calls == [], FakeFlow.calls)
 
 
+heading("TEST 29: orphaned manifest entries never get selected for a real run")
+# Regression guard for the 2026-08-18 incident: a parser bug had once misread
+# one real prompts file as hundreds of bogus ones, leaving the manifest with
+# entries for indices far past the real file. After the parser was fixed,
+# those leftover entries stayed in the manifest as permanently "pending" --
+# and a plain resume run selected them right along with the real ones, then
+# KeyError'd the moment it reached one, since no current prompt text exists
+# for it. This must never happen again, regardless of how the manifest
+# picked up orphaned entries in the first place.
+reset(5)
+man = Manifest.load(config.MANIFEST_FILE)
+man.reconcile([(i, f"prompt #{i} describing beat {i}", None) for i in range(1, 6)])
+for orphan in range(6, 11):
+    man.data["items"][str(orphan)] = {
+        "index": orphan, "prompt": "leftover from a since-fixed parser bug",
+        "narration": None, "prompt_hash": "deadbeef", "status": "pending",
+        "file": None, "url": None, "attempts": 0, "error": None,
+        "started_at": None, "finished_at": None,
+    }
+man.save()
+
+try:
+    outcome = main_mod.run_batch(config.PROMPTS_FILE, config.OUTPUT_DIR)
+    crashed = None
+except Exception as e:
+    outcome = {}
+    crashed = e
+
+check("the run does not crash reaching an orphaned index (old bug: KeyError)",
+      crashed is None, crashed)
+check("only the 5 real prompts were selected, not the 5 orphaned ones",
+      outcome.get("succeeded") == 5, outcome)
+check("orphaned indices were never sent to generate_image",
+      all(not c.startswith("leftover") for c in FakeFlow.calls), FakeFlow.calls)
+
+man = Manifest.load(config.MANIFEST_FILE)
+man.reconcile([(i, f"prompt #{i} describing beat {i}", None) for i in range(1, 6)])
+check("counts() no longer counts the orphaned entries either",
+      sum(man.counts().values()) == 5, man.counts())
+check("missing_indices() no longer names orphaned beats that don't exist",
+      all(i <= 5 for i in man.missing_indices()), man.missing_indices())
+
+
 print("\n" + "=" * 62)
 print(f"RESULTS: {PASS} passed, {FAIL} failed")
 print("=" * 62)
