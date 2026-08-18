@@ -297,6 +297,34 @@ def _parse_beat_blocks(raw_text, path):
 
         entries.append((beat_number, prompt_text, narration))
 
+    # AI-assistant chat exports sometimes restart numbering from the
+    # beginning after a preview/confirmation exchange gets copied into the
+    # file along with the real content (see docs/PROGRESS.md 2026-08-18) —
+    # recognizable as the file's very first beat number reappearing later,
+    # with OTHER, higher beat numbers appearing in between (a preview that
+    # actually counted up, not just an immediate back-to-back repeat — an
+    # accidental copy-paste duplicate like "BEAT 3, BEAT 3" right after each
+    # other must still be rejected below, not silently "recovered"). When a
+    # real restart is detected, only the LAST pass through the numbers is
+    # kept; everything before it was a discarded draft, so it's cut
+    # automatically rather than requiring a manual trim. If duplicates
+    # remain after the cut, something else is going on and this falls
+    # through to the loud error below instead of guessing further. The
+    # stated-count cross-check in load_prompts is the confirmation that the
+    # cut landed on the right beat number.
+    if entries:
+
+        first_number = entries[0][0]
+        first_positions = [i for i, e in enumerate(entries) if e[0] == first_number]
+
+        if len(first_positions) > 1:
+
+            last_idx = first_positions[-1]
+            between = {e[0] for e in entries[1:last_idx]}
+
+            if between - {first_number}:
+                entries = entries[last_idx:]
+
     seen = {}
 
     for beat_number, prompt_text, narration in entries:
