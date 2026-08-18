@@ -74,9 +74,9 @@ Turning autostart off does **not** delete anything else — your prompts, output
 
 ### 1. Get your prompts file ready
 
-A `.txt` file, one image prompt per beat, numbered so beat 47 always becomes `047.jpg`. Several formats are auto-detected (BEAT blocks, PART blocks, timestamped scripts, numbered lists) — you don't need to pick one, just write it the way your script-writing chat naturally produces it, and paste it in.
+A `.txt` file, one image prompt per beat, numbered so beat 47 always becomes `047.jpg`. Several formats are auto-detected (BEAT/PART/SCENE/SHOT/STEP/CLIP blocks, timestamped scripts, numbered lists) — you don't need to pick one, just write it the way your script-writing chat naturally produces it, and paste it in.
 
-If the tool can't recognize the format at all, it will refuse to run and tell you clearly instead of silently generating garbage — that's deliberate.
+If the tool can't recognize the format at all, or spots something wrong with it, it refuses to run and tells you clearly instead of silently generating garbage — see "If the prompts file has a problem" below for what each message means.
 
 ### 2. Open the web UI
 
@@ -117,6 +117,22 @@ Network blip, laptop sleep, Chrome crash, you hit Stop — doesn't matter. Just 
 ### 9. When it's done
 
 Click **Open folder** to jump straight to the output images on disk. Filenames are `001.jpg`, `002.jpg`, etc. — matching your prompts file's beat numbers exactly.
+
+---
+
+## If the prompts file has a problem
+
+Loading a prompts file (Save, or Start) can refuse with one of these. All of them mean it caught something *before* spending any credits on it — none of them are "the tool is broken."
+
+- **"Duplicate BEAT N in ..."** — the same beat number appears twice, back-to-back, with nothing real in between (a genuine copy-paste mistake, not a preview/draft pattern it already knows how to untangle on its own — see the next point). Open the file, find the two `BEAT N` (or `PART N`, etc.) headers, and remove or renumber one.
+
+- **"Parsed X prompt(s) from ..., but the file's own text claims [Y]"** — the file itself says how many prompts it should contain (e.g. it says "all 184 image prompts" somewhere), but the actual parsed count doesn't match. This usually means leftover chat text — an early draft, a "good to proceed?" confirmation — got copied into the file along with the real prompts. Note: if the numbering restarted cleanly (beat 1, 2, 3 as a preview, a confirmation line, then beat 1, 2, 3... again for real), the tool now detects and discards the earlier draft automatically — you'd only see this message if something about the file didn't match that exact pattern. Open the file and check the start of it for a stray preview/chat section.
+
+- **"...looks like it's laid out in '\<WORD> \<number>' blocks, but that keyword isn't one this tool recognizes yet"** — your file uses a numbering keyword (like `CHAPTER 3`, `SEGMENT 12`) that isn't one of the known ones (`Beat`, `Part`, `Scene`, `Shot`, `Step`, `Clip`). Tell me the file's header format and I'll add it — this is a five-minute code change, not something you need to work around by hand.
+
+- **"...doesn't match any recognized format... but its mix of short and long lines suggests it IS structured"** — the file doesn't use a numbered keyword at all, but its line pattern doesn't look like one plain prompt per line either. Same fix: share the file and I'll add support for its actual layout.
+
+In every case: the tool is refusing to guess rather than silently sending header text, narration, or half a chat conversation to Flow as bogus image prompts (that's exactly what caused the 184-beats-read-as-935 incident this whole system was built to prevent). If you hit one of these, the fastest path is just sending me the file.
 
 ---
 
