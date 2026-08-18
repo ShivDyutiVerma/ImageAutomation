@@ -435,8 +435,15 @@ def run_batch(
     flow = FlowAutomation()
 
     if dry_run:
+
+        url = flow.flow_page.url
+
         try:
-            url = flow.flow_page.url
+            # Confirms the project actually loads (catches a deleted/expired
+            # project immediately, with a clear reason) rather than just
+            # reading the URL of a tab that may be showing an error screen.
+            # No credits spent — this only waits for the UI to render.
+            flow.wait_until_ready()
         finally:
             flow.close()
 

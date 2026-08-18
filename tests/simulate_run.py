@@ -91,12 +91,20 @@ class FakeFlow:
 
     fail_for = set()
     raise_setup_at = None
+    project_missing = False
     calls = []
 
     def __init__(self, *args, **kwargs):
         self.flow_page = FakePage()
 
+    def wait_until_ready(self, timeout=None):
+        if FakeFlow.project_missing:
+            raise FlowSetupError(
+                "This Flow project no longer exists -- simulated"
+            )
+
     def generate_image(self, prompt):
+        self.wait_until_ready()
         FakeFlow.calls.append(prompt)
         index = int(prompt.split("#")[1].split()[0])
         if FakeFlow.raise_setup_at == index:
@@ -125,6 +133,7 @@ def reset(n=300, fail_for=(), setup_at=None):
     write_prompts([f"prompt #{i} describing beat {i}" for i in range(1, n + 1)])
     FakeFlow.fail_for = set(fail_for)
     FakeFlow.raise_setup_at = setup_at
+    FakeFlow.project_missing = False
     FakeFlow.calls = []
 
 
@@ -649,6 +658,40 @@ man.reconcile([(1, "only a pending beat, never run", None)])
 man.save()
 check("only-pending manifest -> no estimate (nothing finished)",
       web_ui.average_duration(WORK / "output") is None)
+
+
+heading("TEST 27: dry run checks the project actually loads")
+# Regression guard for the 2026-08-18 incident: a dry run used to just read
+# flow.flow_page.url and report "connected", even when that URL pointed at
+# a deleted project showing Flow's own error screen. It must now actually
+# wait for the page to be ready, so a dead project is caught immediately
+# instead of only surfacing once a real (credit-spending) run starts.
+reset(3)
+outcome = main_mod.run_batch(
+    config.PROMPTS_FILE, config.OUTPUT_DIR, dry_run=True,
+)
+check("a healthy project reports a normal dry-run outcome",
+      outcome.get("dry_run") is True, outcome)
+check("no images generated during a dry run",
+      FakeFlow.calls == [], FakeFlow.calls)
+
+heading("TEST 28: a deleted/expired project is caught immediately, not retried")
+reset(3)
+FakeFlow.project_missing = True
+try:
+    main_mod.run_batch(config.PROMPTS_FILE, config.OUTPUT_DIR, dry_run=True)
+    check("dry run against a missing project raises FlowSetupError", False)
+except FlowSetupError as e:
+    check("the error names the actual problem", "no longer exists" in str(e), str(e))
+
+reset(3)
+FakeFlow.project_missing = True
+outcome = main_mod.run_batch(config.PROMPTS_FILE, config.OUTPUT_DIR)
+check("a real run aborts immediately with a clear reason, not a generic retry loop",
+      bool(outcome.get("aborted_reason")) and "no longer exists" in outcome["aborted_reason"],
+      outcome.get("aborted_reason"))
+check("not one generate_image call succeeded against a dead project",
+      FakeFlow.calls == [], FakeFlow.calls)
 
 
 print("\n" + "=" * 62)

@@ -427,6 +427,28 @@ class FlowAutomation:
 
         return True
 
+    def _project_missing(self):
+        """The 'Something went wrong. Back to projects.' screen Flow shows
+        when a project ID no longer exists — deleted or expired server-side
+        — rather than any ordinary page-load hiccup. Checked ahead of
+        _page_ready()'s poll loop so this fails in seconds instead of
+        burning the full READY_TIMEOUT (and then MAX_ATTEMPTS retries, and
+        then the consecutive-failure cooldown cycle) against a project that
+        can never become ready no matter how long it waits.
+
+        Confirmed live (2026-08-18): this exact text is what renders, and
+        the page's own flow.projectInitialData tRPC call returns HTTP 400
+        for a project in this state — that's Google's backend rejecting the
+        project ID itself, not a rendering delay. See docs/FLOW_UI_NOTES.md.
+        """
+
+        try:
+            text = self.flow_page.inner_text("body")
+        except Exception:
+            return False
+
+        return "Something went wrong" in text and "Back to projects" in text
+
     def wait_until_ready(self, timeout=None):
         """Poll until the page is usable, reloading once partway through the
         timeout if it never becomes ready.
@@ -446,6 +468,17 @@ class FlowAutomation:
         reloaded = False
 
         while True:
+
+            if self._project_missing():
+                raise FlowSetupError(
+                    f"This Flow project no longer exists — {self.flow_page.url} "
+                    f"shows Flow's own 'Something went wrong' screen, which "
+                    f"means the project was deleted or expired server-side "
+                    f"(confirmed: Flow's projectInitialData API returns HTTP "
+                    f"400 for it). This can't be fixed by retrying. Pick a "
+                    f"different project via Setup -> Choose project, or "
+                    f"create a new one."
+                )
 
             if self._page_ready():
                 return
