@@ -438,6 +438,31 @@ def discover_projects():
             pass
 
 
+def _discover_project_hrefs(page):
+    """Project links currently on a Flow landing-page tab, as relative
+    hrefs, newest first (matching Flow's own list ordering). Read-only and
+    tolerant of a mid-render page — an empty result just means "none found
+    yet", not an error, since this is polled while the page may still be
+    updating after a click.
+    """
+
+    try:
+        hrefs = page.eval_on_selector_all(
+            f"a[href*='{config.FLOW_PROJECT_URL_MARKER}']",
+            "els => els.map(e => e.getAttribute('href'))",
+        )
+    except Exception:
+        return []
+
+    seen = []
+
+    for href in hrefs:
+        if href and href not in seen:
+            seen.append(href)
+
+    return seen
+
+
 def create_new_project(timeout=150, poll=0.5, should_cancel=None):
     """Create a brand-new, empty Flow project and return its URL.
 
@@ -519,7 +544,18 @@ def create_new_project(timeout=150, poll=0.5, should_cancel=None):
                 "Could not find a 'New project' button on the Flow landing page."
             )
 
+        # Confirmed live (2026-08-18): clicking "New project" does not
+        # reliably navigate anywhere at all — sometimes it just adds a new
+        # card to the landing page's own project list and leaves the tab
+        # sitting right where it was. Waiting only for a URL/tab change (the
+        # original strategy) can then never succeed no matter how long the
+        # timeout is, which is exactly what was happening. The project list
+        # itself is the more reliable signal: snapshot it before the click,
+        # then watch for a link that wasn't there before, and navigate to it
+        # explicitly rather than assuming Flow will.
         existing_pages = set(context.pages)
+        existing_hrefs = set(_discover_project_hrefs(page))
+
         target.click()
 
         start = time.time()
@@ -548,10 +584,21 @@ def create_new_project(timeout=150, poll=0.5, should_cancel=None):
                 except Exception:
                     continue
 
+            new_hrefs = [
+                href for href in _discover_project_hrefs(page)
+                if href not in existing_hrefs
+            ]
+
+            if new_hrefs:
+                target_url = config.FLOW_ORIGIN + new_hrefs[0]
+                page.goto(target_url)
+                return target_url
+
             time.sleep(poll)
 
         raise RuntimeError(
-            f"Clicked 'New project' but nothing opened within {timeout}s. "
+            f"Clicked 'New project' but nothing opened within {timeout}s, "
+            f"and no new project appeared in the landing page's list either. "
             f"This has been seen to still complete late — check the Chrome "
             f"window before trying again, since clicking a second time "
             f"could create two projects if the first one lands after all."
