@@ -136,6 +136,16 @@ In every case: the tool is refusing to guess rather than silently sending header
 
 ---
 
+## If Flow says "Something went wrong"
+
+This means the specific Flow project configured (`FLOW_PROJECT_URL` in `.env`) no longer exists — deleted or expired on Google's own servers, confirmed by inspecting Flow's own network requests live (its `projectInitialData` API returns HTTP 400 for that project ID; your account and every other project are unaffected). It is not a bug in this tool, and there is nothing about a specific project's lifetime that this tool controls or can prevent — Flow can drop a project at any time.
+
+The tool now catches this immediately (in seconds, with a clear message naming the exact problem) instead of the old behavior — a confusing multi-minute hang followed by a generic timeout. It's caught during **Dry run** too, so you'll see it before spending any time on a real run.
+
+**To fix it:** open the web UI → **Setup** → **Choose project**, and pick any project from the live list (or click **New project** to create one). Whatever you pick becomes the new `FLOW_PROJECT_URL` automatically — no manual `.env` editing needed.
+
+---
+
 ## If Google logs you out
 
 Flow sessions occasionally expire. If a run fails immediately with a message about needing to sign in, open the Chrome window this tool uses (it's a separate, dedicated browser profile — not your regular Chrome) and sign back into Google there manually. This tool never stores or enters your Google password itself — signing in is always a manual, one-time step.
