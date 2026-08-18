@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 import config
 from downloader import download_image
-from flow_automation import FlowAutomation, FlowSetupError
+from flow_automation import FlowAutomation, FlowContentPolicyError, FlowSetupError
 from manifest import Manifest
 from prompt_loader import detect_gaps, load_prompts
 
@@ -228,6 +228,23 @@ def process_prompt(flow, index, prompt, manifest, output_dir):
 
         except FlowSetupError:
             raise
+
+        # Not retried: Flow rejected this exact prompt on content-policy
+        # grounds, and will reject the identical prompt identically every
+        # time, so retrying can only burn MAX_ATTEMPTS more timeouts for no
+        # chance of a different outcome. Recorded and reported immediately
+        # instead, distinctly from a transient/technical failure, so it's
+        # clear this beat needs a rewritten prompt, not a re-run.
+        except FlowContentPolicyError as e:
+
+            last_error = e
+
+            manifest.record_failure(index, last_error, attempt)
+            manifest.save()
+
+            console_write(f"  REJECTED (content policy, not retried): {e}")
+
+            return False
 
         except Exception as e:
 

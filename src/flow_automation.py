@@ -14,6 +14,22 @@ class FlowGenerationError(Exception):
     """A single prompt failed — worth retrying."""
 
 
+class FlowContentPolicyError(FlowGenerationError):
+    """Flow rejected this specific prompt on content-policy grounds.
+
+    Distinct from a plain FlowGenerationError because retrying is pointless
+    here — the identical prompt will be rejected identically every time, so
+    the caller should record the failure and move on rather than burning
+    MAX_ATTEMPTS retries (each with its own timeout) on something no retry
+    can fix. Confirmed live (2026-08-18): four consecutive beats each waited
+    the full 180s and then reported a generic "no new image" timeout, when
+    Flow had actually rejected each one in seconds with an explicit
+    on-page message. This tool has no role in judging or working around
+    content policy — see docs/PRD.md's non-goals — so the fix is purely to
+    surface the real reason immediately instead of a misleading timeout.
+    """
+
+
 class FlowAutomation:
 
     def __init__(self, cdp_url=None):
@@ -50,6 +66,15 @@ class FlowAutomation:
             raise FlowSetupError("Attached to Chrome but it has no browser context.")
 
         self.context = self.browser.contexts[0]
+
+        # Lets fill_prompt() paste instead of typing (see its docstring).
+        # Non-fatal if a particular Chrome/profile ever refuses this — it
+        # just means every fill_prompt() call falls back to typing, still
+        # correct, only slower.
+        try:
+            self.context.grant_permissions(["clipboard-read", "clipboard-write"])
+        except Exception:
+            pass
 
         self._wait_for_any_page_url()
 
@@ -532,6 +557,22 @@ class FlowAutomation:
         return list(dict.fromkeys(matching))
 
     def fill_prompt(self, prompt):
+        """Paste the prompt in, rather than typing it character by
+        character.
+
+        Confirmed live (2026-08-18): keyboard.type() at ~20ms/char took
+        10-20+ seconds on this project's typical prompt length (many run
+        800-1500 characters) — real, avoidable time added to every single
+        beat across a 200-300 image run. A real clipboard paste dispatches
+        the same native 'paste' event a person's Ctrl+V would, so Flow's
+        own (React) input handling picks it up correctly — unlike setting
+        the element's text directly via JS, which can update what's
+        visually shown without updating the framework's own state, leaving
+        Create silently pointed at stale or empty text. The result is
+        verified (the editor actually contains the pasted text) rather than
+        assumed, and falls back to typing if it doesn't — so a clipboard
+        permission quirk on some machine degrades to slow, never broken.
+        """
 
         editor = self.flow_page.locator('[contenteditable="true"]')
 
@@ -539,10 +580,25 @@ class FlowAutomation:
             raise FlowGenerationError("Prompt editor not found on the page.")
 
         editor.first.click()
-
         self.flow_page.keyboard.press("Control+A")
-        self.flow_page.keyboard.press("Backspace")
-        self.flow_page.keyboard.type(prompt, delay=20)
+
+        pasted = False
+
+        try:
+            self.flow_page.evaluate(
+                "text => navigator.clipboard.writeText(text)", prompt
+            )
+            self.flow_page.keyboard.press("Control+V")
+            self.flow_page.wait_for_timeout(200)
+            pasted = prompt[:30] in (editor.first.inner_text() or "")
+        except Exception:
+            pasted = False
+
+        if not pasted:
+            editor.first.click()
+            self.flow_page.keyboard.press("Control+A")
+            self.flow_page.keyboard.press("Backspace")
+            self.flow_page.keyboard.type(prompt, delay=20)
 
     def click_create(self):
 
@@ -553,12 +609,46 @@ class FlowAutomation:
 
         button.click()
 
-    def wait_for_new_images(self, before, timeout=None):
+    def _content_policy_message(self):
+        """The specific rejection line Flow shows when it refuses a prompt
+        on content-policy grounds ("This prompt might violate our policies
+        about generating harmful content related to minors." etc.), or None
+        if no such message is currently showing. Matched by substring
+        rather than a specific element/selector, since the exact markup is
+        one more thing Google can change without notice (see
+        docs/FLOW_UI_NOTES.md) — the wording itself is the more stable
+        signal.
+        """
+
+        try:
+            text = self.flow_page.inner_text("body")
+        except Exception:
+            return None
+
+        for line in text.splitlines():
+            line = line.strip()
+            if "violate our policies" in line.lower():
+                return line
+
+        return None
+
+    def wait_for_new_images(self, before, timeout=None, before_policy_message=None):
         """Wait until image URLs appear that weren't present before the click.
 
         Comparing sets rather than watching a fixed position means this works
         whether Flow prepends, appends, or reorders results, and it reveals how
         many images a single generation produces.
+
+        before_policy_message is whatever _content_policy_message() reported
+        right before this generation was started (see generate_image) — a
+        stale rejection banner from a *previous* prompt can still be on
+        screen for a moment after the next Create click, so only a message
+        that's new or different counts as this generation's own rejection.
+        Confirmed live (2026-08-18): four consecutive beats each burned the
+        full timeout and reported a generic "no new image" failure, when
+        Flow had actually rejected each one in seconds with an explicit
+        on-page reason — this makes that immediate and correctly labeled
+        instead.
         """
 
         timeout = timeout or config.GENERATION_TIMEOUT
@@ -566,6 +656,11 @@ class FlowAutomation:
         start = time.time()
 
         while True:
+
+            policy_message = self._content_policy_message()
+
+            if policy_message and policy_message != before_policy_message:
+                raise FlowContentPolicyError(policy_message)
 
             current = self.get_generated_urls()
 
@@ -619,11 +714,14 @@ class FlowAutomation:
         self.wait_until_ready()
 
         before = set(self.get_generated_urls())
+        before_policy_message = self._content_policy_message()
 
         self.fill_prompt(prompt)
         self.click_create()
 
-        new_images = self.wait_for_new_images(before)
+        new_images = self.wait_for_new_images(
+            before, before_policy_message=before_policy_message
+        )
 
         if len(new_images) > 1:
             # Genuinely distinct generations from one click, not the known

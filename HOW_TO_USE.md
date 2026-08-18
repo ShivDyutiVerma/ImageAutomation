@@ -146,6 +146,16 @@ The tool now catches this immediately (in seconds, with a clear message naming t
 
 ---
 
+## If a beat fails with "REJECTED (content policy, not retried)"
+
+Google Flow refused that specific prompt on content-policy grounds — its own on-page message names the reason (e.g. "might violate our policies about generating harmful content related to minors"). This is Flow's content moderation, not a bug or a technical failure, and it isn't retried automatically since the identical prompt would just be rejected identically every time.
+
+This tool doesn't judge or rewrite prompts — that's a decision only you can make. The fix is to edit that beat's prompt text (rephrase whatever's triggering the flag) and regenerate just that one beat: **What to run → Beat interval…**, set From/To to that beat number, and Start.
+
+Other failure messages (a plain timeout, a network hiccup) *are* retried automatically up to 3 times — only a content-policy rejection skips straight to recording the failure.
+
+---
+
 ## If Google logs you out
 
 Flow sessions occasionally expire. If a run fails immediately with a message about needing to sign in, open the Chrome window this tool uses (it's a separate, dedicated browser profile — not your regular Chrome) and sign back into Google there manually. This tool never stores or enters your Google password itself — signing in is always a manual, one-time step.
